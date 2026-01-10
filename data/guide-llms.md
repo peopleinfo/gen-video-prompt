@@ -1,19 +1,17 @@
-<url>
-https://context7.com/zhangchenchen/awesome_sora2_prompt/llms.txt?tokens=100000
-</url>
+
 <query>
 Extract ALL remaining content including: Prompt Adaptations for Sora 2 (Audio-First Prompts, Physics-Focused Prompts, Cameo Integration Prompts), Prompt Analysis Insights (Success Factors, Common Challenges), Summary section, and any other remaining content not yet extracted.
 </query>
 <result>
 - Prompt Adaptations for Sora 2
 
-  - Audio-First Prompts
+- Audio-First Prompts
     (Content not available in the provided excerpt)
 
-  - Physics-Focused Prompts
+- Physics-Focused Prompts
     (Content not available in the provided excerpt)
 
-  - Cameo Integration Prompts
+- Cameo Integration Prompts
     (Content not available in the provided excerpt)
 
 - Prompt Analysis Insights

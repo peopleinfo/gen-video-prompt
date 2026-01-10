@@ -1,6 +1,4 @@
-<url>
-https://context7.com/zhangchenchen/awesome_sora2_prompt/llms.txt?tokens=100000
-</url>
+
 <query>
 Extract ALL remaining Sora 2 prompt content including: Prompt Engineering Patterns (Character-Driven Narrative, Precision Technical, Viral Community), Audio Elements, any prompt examples, templates, categories, and all other video generation prompt guidance.
 </query>
@@ -12,18 +10,21 @@ Remaining Sora 2 prompt content extracted from the webpage includes:
 ## Prompt Engineering Patterns
 
 ### Character-Driven Narrative
+
 - Focus on defining detailed characters with appearance, emotions, personality.
 - Describe their actions, interactions, and temporal dynamics.
 - Set environment and cinematic framing to support narrative immersion.
 - Use medium-length prompts (50-120 words) for balanced storytelling.
 
 ### Precision Technical
+
 - Emphasize detailed physical properties, material interactions, environmental context.
 - Include camera specifications, lighting conditions, color grading.
 - Use long prompts (120-300+ words) for precise control and cinematic production.
 - Treat Sora as a world simulator describing miniature worlds with internal consistency.
 
 ### Viral Community
+
 - Leverage strong style keywords and clear concepts.
 - Use short prompts (<50 words) for creative exploration and viral appeal.
 - Examples often focus on visually striking or conceptually unique scenes.
@@ -39,6 +40,7 @@ Sora 2 introduces synchronized audio generation alongside video. While specific 
 ## Prompt Examples
 
 ### Five Pillars Template Example: Tokyo Walk Prompt (Official OpenAI)
+
 ```
 Subject: A stylish woman in black leather jacket, long red dress, black boots,
          sunglasses, red lipstick
@@ -57,6 +59,7 @@ a mirror effect of the colorful lights. Many pedestrians walk about."
 ```
 
 ### World Simulator Paradigm Example: Dragon over Glacier (Sora 2 Official)
+
 ```
 Primary Target & Visuals:
 A dragon slicing past serrated ice spires jutting from a glacier, trailing

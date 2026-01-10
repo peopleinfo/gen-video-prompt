@@ -1,0 +1,22 @@
+{
+  "name": "gen-video-prompt-mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "MCP server for browsing local Sora 2 prompt docs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "rename:data": "tsx src/rename-data.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.1.0",
+    "fast-glob": "^3.3.2",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

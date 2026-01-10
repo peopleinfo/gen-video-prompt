@@ -1,6 +1,3 @@
-<url>
-https://context7.com/zhangchenchen/awesome_sora2_prompt/llms.txt?tokens=100000
-</url>
 <query>
 Extract the final sections: Prompt Adaptations for Sora 2 (Audio-First Prompts with jazz musician example, Physics-Focused Prompts with volleyball example, Cameo Integration Prompts with @sama example), Prompt Analysis Insights (Success Factors list, Common Challenges list), and Summary section. Get all text content.
 </query>
@@ -25,6 +22,7 @@ Example:
 Prompt Analysis Insights
 
 Success Factors
+
 - Clear definition of subject and character details
 - Descriptive action and motion with temporal dynamics
 - Rich environmental context including time, weather, and spatial relationships
@@ -34,6 +32,7 @@ Success Factors
 - Appropriate prompt length balancing creativity and technical control
 
 Common Challenges
+
 - Vague or incomplete descriptions leading to incoherent visuals
 - Overly generic prompts lacking specificity in character or environment
 - Ignoring physical interactions resulting in unnatural animations
