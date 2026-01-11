@@ -162,13 +162,13 @@ function buildCodexArgs(
     for (const imagePath of imagePaths) {
       args.push("-i", imagePath);
     }
-    args.push("-");
+    args.push("--", "-");
     return args;
   }
   for (const imagePath of imagePaths) {
     args.push("-i", imagePath);
   }
-  args.push("-");
+  args.push("--", "-");
   return args;
 }
 

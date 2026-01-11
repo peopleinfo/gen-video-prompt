@@ -406,7 +406,17 @@
           const name = document.createElement("span");
           name.style.flex = "1";
           name.style.minWidth = "0";
-          name.textContent = `${file.name} (${Math.round(file.size / 1024)} KB)`;
+          const fileName = file.name;
+          const maxName = 32;
+          const displayName =
+            fileName.length > maxName
+              ? `${fileName.slice(0, 18)}...${fileName.slice(-8)}`
+              : fileName;
+          name.textContent = `${displayName} (${Math.round(file.size / 1024)} KB)`;
+          name.title = fileName;
+          name.style.whiteSpace = "nowrap";
+          name.style.overflow = "hidden";
+          name.style.textOverflow = "ellipsis";
           const remove = document.createElement("button");
           remove.type = "button";
           remove.textContent = "X";
