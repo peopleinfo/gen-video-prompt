@@ -417,7 +417,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
         storytelling_guidance: getStorytellingGuidance(story, mode),
         duration_seconds: getPromptArg(args, "duration_seconds"),
         resolution: getPromptArg(args, "resolution") ?? "1920x1080",
-        aspect_ratio: getPromptArg(args, "aspect_ratio"),
+        aspect_ratio: getPromptArg(args, "aspect_ratio") ?? "9:16 portrait",
         style: getPromptArg(args, "style"),
         camera: getPromptArg(args, "camera"),
         lighting: getPromptArg(args, "lighting"),

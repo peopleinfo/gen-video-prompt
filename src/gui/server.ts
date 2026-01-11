@@ -147,6 +147,19 @@ function createMcpClient(): {
   return { request, close };
 }
 
+function buildCodexArgs(model: string | undefined, sessionMode: string | undefined): string[] {
+  const args: string[] = [];
+  if (model) {
+    args.push("-m", model);
+  }
+  args.push("exec", "--color", "never");
+  if (sessionMode === "resume_last") {
+    args.push("resume", "--last");
+  }
+  args.push("-");
+  return args;
+}
+
 async function runCommandLlm(params: {
   command: string;
   args: string[];
@@ -411,10 +424,8 @@ async function main(): Promise<void> {
           }
 
           const codexModel = asString(body.codex_model);
-          const effectiveArgs =
-            command === "codex"
-              ? [...(codexModel ? ["-m", codexModel] : []), "exec", "--color", "never", "-"]
-              : [];
+          const codexSession = asString(body.codex_session) ?? "new";
+          const effectiveArgs = command === "codex" ? buildCodexArgs(codexModel, codexSession) : [];
 
           const out = await runCommandLlm({ command, args: effectiveArgs, input: instruction });
           json(res, 200, { ok: true, mode: "generated", text: out });
@@ -507,10 +518,8 @@ async function main(): Promise<void> {
           }
 
           const codexModel = asString(body.codex_model);
-          const effectiveArgs =
-            command === "codex"
-              ? [...(codexModel ? ["-m", codexModel] : []), "exec", "--color", "never", "-"]
-              : [];
+          const codexSession = asString(body.codex_session) ?? "new";
+          const effectiveArgs = command === "codex" ? buildCodexArgs(codexModel, codexSession) : [];
 
           const out = await runCommandLlm({ command, args: effectiveArgs, input: prompt });
           json(res, 200, { ok: true, mode: "chat", text: out });

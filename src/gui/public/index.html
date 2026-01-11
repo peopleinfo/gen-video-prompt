@@ -172,7 +172,7 @@
               <label for="codexModelPreset">Select model and effort</label>
               <select id="codexModelPreset">
                 <option value="">(default)</option>
-                <option value="gpt-5.2-codex">gpt-5.2-codex</option>
+                <option value="gpt-5.2-codex">gpt-5.2-codex (current)</option>
                 <option value="gpt-5.1-codex-max">gpt-5.1-codex-max</option>
                 <option value="gpt-5.1-codex-mini">gpt-5.1-codex-mini</option>
                 <option value="gpt-5.2">gpt-5.2</option>
@@ -185,6 +185,15 @@
               <div style="margin-top: 6px; font-size: 12px; color: var(--muted)">
                 Access legacy models with Custom or via config.toml.
               </div>
+            </div>
+
+            <div id="codexSessionRow" style="margin-top: 10px">
+              <label for="codexSessionMode">Codex session</label>
+              <select id="codexSessionMode">
+                <option value="new" selected>New topic (stateless)</option>
+                <option value="resume_last">Resume last session</option>
+              </select>
+              <button id="btnCodexNewTopic" type="button" style="margin-top: 6px">New topic</button>
             </div>
 
             <div id="commandCustom" style="display: none">
@@ -285,9 +294,9 @@
             <div>
               <label for="aspect">Aspect ratio</label>
               <select id="aspect">
-                <option value="" selected>(leave blank)</option>
+                <option value="">(leave blank)</option>
                 <option value="16:9 landscape">16:9 landscape</option>
-                <option value="9:16 portrait">9:16 portrait</option>
+                <option value="9:16 portrait" selected>9:16 portrait</option>
                 <option value="1:1 square">1:1 square</option>
                 <option value="custom">Custom…</option>
               </select>
@@ -392,11 +401,19 @@
         return (modelPreset.value || "").trim();
       }
 
+      function getCodexSessionMode() {
+        const preset = $("commandPreset");
+        if (!preset || preset.value !== "codex") return "";
+        const mode = $("codexSessionMode");
+        return mode ? mode.value || "new" : "new";
+      }
+
       function collectLlmConfig() {
         return {
           provider: $("provider").value || "none",
           command: getCommandValue(),
           codex_model: getCodexModelValue(),
+          codex_session: getCodexSessionMode(),
           ollama: {
             base_url: $("ollamaBaseUrl").value || "",
             model: $("ollamaModel").value || "",
@@ -461,6 +478,7 @@
           : "";
         set("codexModelPreset", settings.codexModelPreset || presetFromModel);
         set("codexModel", codexModel);
+        set("codexSessionMode", settings.codexSessionMode || "new");
         set("cmd", settings.cmd);
         set("cmdArgs", "");
         set("ollamaBaseUrl", settings.ollamaBaseUrl);
@@ -476,6 +494,7 @@
           commandPreset: $("commandPreset").value || "codex",
           codexModelPreset: $("codexModelPreset").value || "",
           codexModel: $("codexModel").value || "",
+          codexSessionMode: $("codexSessionMode").value || "new",
           cmd: $("cmd").value || "",
           cmdArgs: "",
           ollamaBaseUrl: $("ollamaBaseUrl").value || "",
@@ -605,6 +624,7 @@
           if (provider === "command") {
             payload.command = getCommandValue();
             payload.codex_model = getCodexModelValue() || undefined;
+            payload.codex_session = getCodexSessionMode() || undefined;
           }
           if (provider === "ollama") {
             payload.base_url = $("ollamaBaseUrl").value || undefined;
@@ -729,15 +749,19 @@
           const cmdPresetEl = $("commandPreset");
           const cmdCustomEl = $("commandCustom");
           const codexModelRowEl = $("codexModelRow");
+          const codexSessionRowEl = $("codexSessionRow");
           const codexModelPresetEl = $("codexModelPreset");
           const codexModelCustomEl = $("codexModelCustom");
+          const codexNewTopicEl = $("btnCodexNewTopic");
+          const codexSessionModeEl = $("codexSessionMode");
           const ollamaEl = $("providerOllama");
           const openaiEl = $("providerOpenAi");
           const updateCommandPreset = () => {
-            if (!cmdPresetEl || !cmdCustomEl || !codexModelRowEl) return;
+            if (!cmdPresetEl || !cmdCustomEl || !codexModelRowEl || !codexSessionRowEl) return;
             const isCustom = cmdPresetEl.value === "custom";
             cmdCustomEl.style.display = isCustom ? "block" : "none";
             codexModelRowEl.style.display = isCustom ? "none" : "block";
+            codexSessionRowEl.style.display = isCustom ? "none" : "block";
           };
           const updateCodexModelPreset = () => {
             if (!codexModelPresetEl || !codexModelCustomEl) return;
@@ -754,6 +778,12 @@
           }
           if (codexModelPresetEl) {
             codexModelPresetEl.addEventListener("change", updateCodexModelPreset);
+          }
+          if (codexNewTopicEl && codexSessionModeEl) {
+            codexNewTopicEl.addEventListener("click", () => {
+              codexSessionModeEl.value = "new";
+              saveSettings(captureSettings());
+            });
           }
           applySettings(loadSettings());
           updateProvider();
