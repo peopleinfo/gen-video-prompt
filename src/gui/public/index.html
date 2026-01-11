@@ -243,9 +243,12 @@
         <div class="content" id="view-chat" style="display: none">
           <label for="chatPrompt">Message</label>
           <textarea id="chatPrompt" placeholder="Ask the LLM a quick question..."></textarea>
+          <label for="chatImages">Images (optional)</label>
+          <input id="chatImages" type="file" accept="image/*" multiple />
+          <div id="chatImagesList" style="margin-top: 6px; font-size: 12px; color: var(--muted)"></div>
           <button id="btnChatSend">Send</button>
           <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
-            Response shows in the Output panel.
+            Response shows in the Output panel. Images are supported for Codex CLI.
           </div>
         </div>
 
@@ -382,6 +385,89 @@
         if (!el) return;
         el.textContent = text;
         el.className = isError ? "error" : "";
+      }
+
+      function renderChatImagesList() {
+        const input = $("chatImages");
+        const list = $("chatImagesList");
+        if (!input || !list) return;
+        const files = input.files ? Array.from(input.files) : [];
+        if (!files.length) {
+          list.textContent = "";
+          return;
+        }
+        list.innerHTML = "";
+        files.forEach((file, index) => {
+          const row = document.createElement("div");
+          row.style.display = "flex";
+          row.style.alignItems = "center";
+          row.style.gap = "8px";
+          row.style.marginTop = "4px";
+          const name = document.createElement("span");
+          name.style.flex = "1";
+          name.style.minWidth = "0";
+          name.textContent = `${file.name} (${Math.round(file.size / 1024)} KB)`;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "X";
+          remove.title = "Remove";
+          remove.setAttribute("aria-label", "Remove image");
+          remove.style.marginLeft = "auto";
+          remove.style.marginTop = "0";
+          remove.style.padding = "2px 8px";
+          remove.style.borderColor = "var(--danger)";
+          remove.style.background = "rgba(255, 106, 106, 0.2)";
+          remove.style.color = "var(--danger)";
+          remove.style.fontWeight = "700";
+          remove.style.fontSize = "12px";
+          remove.style.lineHeight = "1";
+          remove.addEventListener("click", () => {
+            const dt = new DataTransfer();
+            files.forEach((f, i) => {
+              if (i !== index) dt.items.add(f);
+            });
+            input.files = dt.files;
+            renderChatImagesList();
+          });
+          row.appendChild(name);
+          row.appendChild(remove);
+          list.appendChild(row);
+        });
+      }
+
+      async function readChatImages() {
+        const input = $("chatImages");
+        if (!input || !input.files || input.files.length === 0) return [];
+        const files = Array.from(input.files);
+        const maxBytes = 10 * 1024 * 1024;
+        const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+        if (totalBytes > maxBytes) {
+          throw new Error("Total image size exceeds 10MB.");
+        }
+        return await Promise.all(
+          files.map(
+            (file) =>
+              new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const result = reader.result;
+                  if (typeof result !== "string") {
+                    reject(new Error("Failed to read image data."));
+                    return;
+                  }
+                  const comma = result.indexOf(",");
+                  const data = comma >= 0 ? result.slice(comma + 1) : "";
+                  if (!data) {
+                    reject(new Error("Invalid image data."));
+                    return;
+                  }
+                  resolve({ name: file.name, type: file.type, data });
+                };
+                reader.onerror = () => reject(new Error("Failed to read image file."));
+                reader.readAsDataURL(file);
+              })
+          )
+        );
       }
 
       function getCommandValue() {
@@ -726,9 +812,10 @@
             return;
           }
           setOutput("Sending...");
+          const images = await readChatImages();
           const data = await api("/api/chat", {
             method: "POST",
-            body: JSON.stringify({ prompt, ...collectLlmConfig() }),
+            body: JSON.stringify({ prompt, images, ...collectLlmConfig() }),
           });
           setOutput(data && data.text ? data.text : "(empty response)");
         } catch (e) {
@@ -743,6 +830,10 @@
           wireCustom("duration", "durationCustom");
           wireCustom("resolution", "resolutionCustom");
           wireCustom("aspect", "aspectCustom");
+          const chatImagesEl = $("chatImages");
+          if (chatImagesEl) {
+            chatImagesEl.addEventListener("change", renderChatImagesList);
+          }
 
           const providerEl = $("provider");
           const cmdEl = $("providerCommand");

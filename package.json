@@ -17,6 +17,7 @@
     "gui:watch:all-llm": "ENABLE_COMMAND_LLM=1 ENABLE_HTTP_LLM=1 MCP_SERVER_DEV=1 tsx watch src/gui/server.ts",
     "mcp:watch": "tsx watch src/server.ts",
     "test:gui": "npm run build && node scripts/test-gui.mjs",
+    "test:gui:codex-image": "node scripts/test-gui-codex-image.mjs",
     "dev": "tsx src/server.ts",
     "rename:data": "tsx src/rename-data.ts"
   },

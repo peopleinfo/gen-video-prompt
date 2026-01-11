@@ -58,8 +58,8 @@ async function readRequestBody(req: http.IncomingMessage, limitBytes = 1_000_000
   });
 }
 
-async function readJson(req: http.IncomingMessage): Promise<JsonRecord> {
-  const raw = await readRequestBody(req);
+async function readJson(req: http.IncomingMessage, limitBytes = 1_000_000): Promise<JsonRecord> {
+  const raw = await readRequestBody(req, limitBytes);
   if (!raw.trim()) return {};
   const parsed = JSON.parse(raw) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -147,17 +147,42 @@ function createMcpClient(): {
   return { request, close };
 }
 
-function buildCodexArgs(model: string | undefined, sessionMode: string | undefined): string[] {
-  const args: string[] = [];
+function buildCodexArgs(
+  model: string | undefined,
+  sessionMode: string | undefined,
+  imagePaths: string[]
+): string[] {
+  const args: string[] = ["exec"];
   if (model) {
     args.push("-m", model);
   }
-  args.push("exec", "--color", "never");
+  args.push("--color", "never");
   if (sessionMode === "resume_last") {
     args.push("resume", "--last");
+    for (const imagePath of imagePaths) {
+      args.push("-i", imagePath);
+    }
+    args.push("-");
+    return args;
+  }
+  for (const imagePath of imagePaths) {
+    args.push("-i", imagePath);
   }
   args.push("-");
   return args;
+}
+
+function extensionForMime(mime: string): string {
+  switch (mime) {
+    case "image/png":
+      return ".png";
+    case "image/jpeg":
+      return ".jpg";
+    case "image/webp":
+      return ".webp";
+    default:
+      return ".bin";
+  }
 }
 
 async function runCommandLlm(params: {
@@ -425,7 +450,7 @@ async function main(): Promise<void> {
 
           const codexModel = asString(body.codex_model);
           const codexSession = asString(body.codex_session) ?? "new";
-          const effectiveArgs = command === "codex" ? buildCodexArgs(codexModel, codexSession) : [];
+          const effectiveArgs = command === "codex" ? buildCodexArgs(codexModel, codexSession, []) : [];
 
           const out = await runCommandLlm({ command, args: effectiveArgs, input: instruction });
           json(res, 200, { ok: true, mode: "generated", text: out });
@@ -482,7 +507,7 @@ async function main(): Promise<void> {
       }
 
       if (method === "POST" && url.pathname === "/api/chat") {
-        const body = await readJson(req);
+        const body = await readJson(req, 20_000_000);
         const prompt = asString(body.prompt) ?? "";
         if (!prompt) {
           json(res, 400, { ok: false, error: "Missing prompt" });
@@ -490,9 +515,17 @@ async function main(): Promise<void> {
         }
 
         const provider = asString(body.provider) ?? "none";
+        const rawImages = Array.isArray(body.images) ? body.images : [];
+        const images = rawImages.filter((img) => img && typeof img === "object") as JsonRecord[];
+        const uploadedFiles: string[] = [];
 
         if (provider === "none") {
           json(res, 400, { ok: false, error: "Provider is set to template only" });
+          return;
+        }
+
+        if (images.length > 0 && provider !== "command") {
+          json(res, 400, { ok: false, error: "Images are only supported with Codex CLI." });
           return;
         }
 
@@ -517,13 +550,50 @@ async function main(): Promise<void> {
             return;
           }
 
-          const codexModel = asString(body.codex_model);
-          const codexSession = asString(body.codex_session) ?? "new";
-          const effectiveArgs = command === "codex" ? buildCodexArgs(codexModel, codexSession) : [];
+          if (images.length > 0 && command !== "codex") {
+            json(res, 400, { ok: false, error: "Images are only supported with Codex CLI." });
+            return;
+          }
 
-          const out = await runCommandLlm({ command, args: effectiveArgs, input: prompt });
-          json(res, 200, { ok: true, mode: "chat", text: out });
-          return;
+          try {
+            if (images.length > 0) {
+              const uploadDir = path.join(ROOT_DIR, "tmp", "uploads");
+              await fs.mkdir(uploadDir, { recursive: true });
+              let totalBytes = 0;
+              const maxBytes = 10 * 1024 * 1024;
+              for (const image of images) {
+                const data = asString(image.data) ?? "";
+                if (!data) {
+                  json(res, 400, { ok: false, error: "Invalid image data." });
+                  return;
+                }
+                const mime = asString(image.type) ?? "";
+                const buffer = Buffer.from(data, "base64");
+                totalBytes += buffer.length;
+                if (totalBytes > maxBytes) {
+                  json(res, 400, { ok: false, error: "Total image size exceeds 10MB." });
+                  return;
+                }
+                const filename = `chat-${Date.now()}-${Math.random().toString(16).slice(2)}${extensionForMime(
+                  mime
+                )}`;
+                const filePath = path.join(uploadDir, filename);
+                await fs.writeFile(filePath, buffer);
+                uploadedFiles.push(filePath);
+              }
+            }
+
+            const codexModel = asString(body.codex_model);
+            const codexSession = asString(body.codex_session) ?? "new";
+            const effectiveArgs =
+              command === "codex" ? buildCodexArgs(codexModel, codexSession, uploadedFiles) : [];
+
+            const out = await runCommandLlm({ command, args: effectiveArgs, input: prompt });
+            json(res, 200, { ok: true, mode: "chat", text: out });
+            return;
+          } finally {
+            await Promise.all(uploadedFiles.map((file) => fs.unlink(file).catch(() => undefined)));
+          }
         }
 
         if (provider === "ollama") {

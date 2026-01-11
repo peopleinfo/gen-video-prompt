@@ -92,6 +92,25 @@ Example (Ollama CLI):
 npm run test:gui
 ```
 
+## Codex image chat test
+
+Start the GUI with command execution enabled:
+
+```bash
+ENABLE_COMMAND_LLM=1 npm run gui
+```
+
+Then run:
+
+```bash
+IMAGE_PATH=/path/to/image.png npm run test:gui:codex-image
+```
+
+Optional:
+
+- `CODEX_MODEL=gpt-5.2-codex` to override the model.
+- `CODEX_SESSION=resume_last` to resume the last Codex session.
+
 ## Register with Codex MCP
 
 Add a server entry to your Codex MCP config. Example:
