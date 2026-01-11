@@ -40,20 +40,25 @@ Core approach:
 - If the user requests "meme", "funny", "comedy", or "viral", prioritize a fast hook (first 1–2s), a surprising visual twist, and a highly memeable moment that could be captioned.
 
 Output format when drafting a prompt:
-1) Prompt (Part 1 — Hook): the opening beat; establish subject, setting, and intent.
-2) Prompt (Part 2 — Escalation): the change/twist; visible consequence or complication.
-3) Prompt (Part 3 — Payoff): the resolution; final striking visual beat (often loopable).
-4) Style: aesthetic, mood, palette, film stock or realism level.
-5) Camera: lens, framing, movement, and shot scale.
-6) Lighting: key source, time of day, practicals, atmosphere.
-7) Action beats: short timeline or beat list for the clip.
-8) Quality: resolution, fps, and technical quality notes.
-9) Audio (optional): diegetic sound cues if relevant.
+- If Part length (seconds) is provided, split the story into multiple parts of that length and label them with time ranges (e.g., Part 1 (0–15s), Part 2 (15–30s), ...).
+- If Part length is NOT provided, output a single Part 1 covering the full Duration.
+
+Each part must include:
+Prompt: the beat for this part.
+Scene: location/time, key props, and staging.
+Style: aesthetic, mood, palette, film stock or realism level.
+Camera: lens, framing, movement, and shot scale.
+Lighting: key source, time of day, practicals, atmosphere.
+Action beats: short timeline or beat list for this part.
+Quality: resolution, fps, and technical quality notes for this part.
+Audio (optional): diegetic sound cues if relevant.
 
 Notes:
 - Resolution and duration are API parameters. Include recommended values but do not claim they are controlled by text alone.
 - Supported durations: 4, 8, 12 seconds (default 4). Resolutions: 1280x720 or 720x1280; Sora 2 Pro also supports 1024x1792 and 1792x1024.
-- If the user asks for multiple shots, keep each shot block independent.
+- If Duration is missing, infer a reasonable total from the brief.
+- If Part length is provided, compute the number of parts from Duration and Part length.
+- Each part should read as its own scene with its own style/camera/lighting; do not apply one global style to all parts.
 `.trim();
 
 const PROMPT_TEMPLATE = `
@@ -68,6 +73,7 @@ Brief:
 
 Include any user constraints:
 - Duration (API param): {{duration_seconds}}
+- Part length (seconds): {{part_length_seconds}}
 - Resolution (API param): {{resolution}}
 - Aspect ratio: {{aspect_ratio}}
 - Style: {{style}}
@@ -78,21 +84,23 @@ Include any user constraints:
 - Audio: {{audio}}
 
 Output format:
-Prompt (Part 1 — Hook): establish subject, setting, intent.
-Prompt (Part 2 — Escalation): the twist/complication with visible consequence.
-Prompt (Part 3 — Payoff): the resolution and final striking beat (often loopable).
-Style: aesthetic, mood, palette, film stock or realism level.
-Camera: lens, framing, movement, and shot scale.
-Lighting: key source, time of day, practicals, atmosphere.
-Action beats: short timeline or beat list for the clip.
-Quality: resolution, fps, and technical quality notes.
-Audio (optional): diegetic sound cues if relevant.
+Part 1 (start–end s):
+Prompt:
+Scene:
+Style:
+Camera:
+Lighting:
+Action beats:
+Quality:
+Audio (optional):
+
+Repeat the Part block for each segment when Part length is provided.
 `.trim();
 
 const PROMPT_NAME = "structured_video_prompt";
 const PROMPT_TITLE = "Structured Sora 2 video prompt";
 const PROMPT_DESCRIPTION =
-  "Generate a cinematic Sora 2 prompt with structured sections (3-part prompt, style, camera, lighting, action beats, quality).";
+  "Generate a cinematic Sora 2 prompt split into parts when part length is provided; each part has its own prompt, scene, style, camera, lighting, action beats, quality, and audio.";
 
 const CATEGORY_PROMPT_NAME = "video_category_suggestion";
 const CATEGORY_PROMPT_TITLE = "Video category suggestion";
@@ -127,6 +135,10 @@ const PROMPT_ARGUMENTS = [
   {
     name: "duration_seconds",
     description: "Preferred duration; recommended values are 4, 8, or 12.",
+  },
+  {
+    name: "part_length_seconds",
+    description: "Seconds per part. If omitted, output a single part.",
   },
   {
     name: "resolution",
@@ -420,6 +432,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
         story,
         storytelling_guidance: getStorytellingGuidance(story, mode),
         duration_seconds: getPromptArg(args, "duration_seconds"),
+        part_length_seconds: getPromptArg(args, "part_length_seconds"),
         resolution: getPromptArg(args, "resolution") ?? "1920x1080",
         aspect_ratio: getPromptArg(args, "aspect_ratio") ?? "9:16 portrait",
         style: getPromptArg(args, "style"),

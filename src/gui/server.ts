@@ -377,6 +377,16 @@ async function main(): Promise<void> {
 
         const provider = asString(body.provider) ?? "none";
         const mode = asString(body.mode);
+        const totalSeconds = Number(asString(body.duration_seconds));
+        const partSeconds = Number(asString(body.part_length_seconds));
+        if (
+          Number.isFinite(partSeconds) &&
+          Number.isFinite(totalSeconds) &&
+          partSeconds >= totalSeconds
+        ) {
+          json(res, 400, { ok: false, error: "Part length must be less than total duration." });
+          return;
+        }
         const rawImages = Array.isArray(body.images) ? body.images : [];
         const images = rawImages.filter((img) => img && typeof img === "object") as JsonRecord[];
         const uploadedFiles: string[] = [];
@@ -393,6 +403,9 @@ async function main(): Promise<void> {
               story,
               ...(mode ? { mode } : {}),
               ...(asString(body.duration_seconds) ? { duration_seconds: asString(body.duration_seconds)! } : {}),
+              ...(asString(body.part_length_seconds)
+                ? { part_length_seconds: asString(body.part_length_seconds)! }
+                : {}),
               ...(asString(body.resolution) ? { resolution: asString(body.resolution)! } : {}),
               ...(asString(body.aspect_ratio) ? { aspect_ratio: asString(body.aspect_ratio)! } : {}),
               ...(asString(body.style) ? { style: asString(body.style)! } : {}),
@@ -416,16 +429,20 @@ async function main(): Promise<void> {
         const instruction = [
           "You are a prompt writer. Fill in the missing fields and output ONLY the final structured prompt sections.",
           "Do not include '(unspecified)'. If unknown, infer plausible specifics.",
-          "Return exactly these sections:",
-          "Prompt (Part 1 — Hook):",
-          "Prompt (Part 2 — Escalation):",
-          "Prompt (Part 3 — Payoff):",
+          "If Part length (seconds) is provided, split into multiple parts and label with time ranges.",
+          "If Part length is NOT provided, output a single Part 1 covering the full Duration.",
+          "Return exactly these sections for each part:",
+          "Part 1 (start–end s):",
+          "Prompt:",
+          "Scene:",
           "Style:",
           "Camera:",
           "Lighting:",
           "Action beats:",
           "Quality:",
           "Audio (optional):",
+          "",
+          "Repeat the Part block for each segment when Part length is provided.",
           "",
           "Template + constraints:",
           templateText,

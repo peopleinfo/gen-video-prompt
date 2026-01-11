@@ -253,6 +253,12 @@
         </div>
 
         <div class="content" id="view-prompts" style="display: none">
+          <label>Workspaces</label>
+          <div id="workspaceTabs" style="display: flex; flex-wrap: wrap; gap: 8px"></div>
+          <div style="margin-top: 6px; font-size: 12px; color: var(--muted)">
+            Images are not preserved between workspaces.
+          </div>
+
           <label for="promptName">Prompt</label>
           <select id="promptName"></select>
 
@@ -271,16 +277,25 @@
 
           <div class="row">
             <div>
-              <label for="duration">Duration (seconds)</label>
-              <select id="duration">
-                <option value="" selected>(leave blank)</option>
-                <option value="4">4</option>
-                <option value="8">8</option>
-                <option value="12">12</option>
+              <label for="duration">Total duration (seconds) *</label>
+              <select id="duration" required>
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="15" selected>15</option>
+                <option value="20">20</option>
+                <option value="30">30</option>
+                <option value="60">1mn</option>
+                <option value="120">2mn</option>
                 <option value="custom">Custom…</option>
               </select>
               <input id="durationCustom" placeholder="Enter duration" style="display: none; margin-top: 8px" />
             </div>
+            <div>
+              <label for="partLengthSeconds">Part length (seconds)</label>
+              <input id="partLengthSeconds" placeholder="15" />
+            </div>
+          </div>
+          <div class="row">
             <div>
               <label for="resolution">Resolution</label>
               <select id="resolution">
@@ -292,11 +307,12 @@
                 <option value="1024x1792">1024x1792</option>
                 <option value="custom">Custom…</option>
               </select>
-              <input id="resolutionCustom" placeholder="Enter resolution (e.g. 1920x1080)" style="display: none; margin-top: 8px" />
+              <input
+                id="resolutionCustom"
+                placeholder="Enter resolution (e.g. 1920x1080)"
+                style="display: none; margin-top: 8px"
+              />
             </div>
-          </div>
-
-          <div class="row">
             <div>
               <label for="aspect">Aspect ratio</label>
               <select id="aspect">
@@ -308,11 +324,10 @@
               </select>
               <input id="aspectCustom" placeholder="Enter aspect ratio" style="display: none; margin-top: 8px" />
             </div>
-            <div>
-              <label for="style">Style</label>
-              <input id="style" placeholder="cinematic realism, 65mm..." />
-            </div>
           </div>
+
+          <label for="style">Style</label>
+          <input id="style" placeholder="cinematic realism, 65mm..." />
 
           <label for="camera">Camera</label>
           <input id="camera" placeholder="lens, framing, movement..." />
@@ -355,8 +370,18 @@
       </section>
 
       <section class="panel">
-        <h2>Output</h2>
-        <pre id="output">(ready)</pre>
+        <div class="tabs" style="border-bottom: 1px solid var(--border)">
+          <div class="tab" id="tab-preview" data-active="true">Preview</div>
+          <div class="tab" id="tab-output" data-active="false">Output</div>
+        </div>
+        <div
+          id="outputActions"
+          style="display: none; justify-content: flex-end; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border)"
+        >
+          <button id="btnCopyOutput" type="button" style="margin-top: 0">Copy output</button>
+        </div>
+        <pre id="outputPreview">(ready)</pre>
+        <pre id="output" style="display: none">(ready)</pre>
       </section>
     </main>
 
@@ -377,6 +402,64 @@
       $("tab-docs").addEventListener("click", () => setTab("docs"));
       $("tab-tools").addEventListener("click", () => setTab("tools"));
 
+      function setOutputTab(active) {
+        const views = ["output", "preview"];
+        for (const v of views) {
+          $("tab-" + v).dataset.active = String(v === active);
+          const el = v === "output" ? $("output") : $("outputPreview");
+          if (el) el.style.display = v === active ? "block" : "none";
+        }
+        const actions = $("outputActions");
+        if (actions) actions.style.display = active === "output" ? "flex" : "none";
+      }
+
+      $("tab-preview").addEventListener("click", () => setOutputTab("preview"));
+      $("tab-output").addEventListener("click", () => setOutputTab("output"));
+
+      $("btnCopyOutput").addEventListener("click", async () => {
+        const text = $("output").textContent || "";
+        if (!text) return;
+        const btn = $("btnCopyOutput");
+        const original = btn.textContent;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const textarea = document.createElement("textarea");
+            textarea.value = text;
+            textarea.style.position = "fixed";
+            textarea.style.opacity = "0";
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand("copy");
+            textarea.remove();
+          }
+          btn.textContent = "Copied";
+          setTimeout(() => {
+            btn.textContent = original;
+          }, 1200);
+        } catch {
+          btn.textContent = "Failed";
+          setTimeout(() => {
+            btn.textContent = original;
+          }, 1200);
+        }
+      });
+
+      const PREVIEW_TEMPLATE = [
+        "Part 1 (start–end s):",
+        "Prompt: <...>",
+        "Scene: <...>",
+        "Style: <...>",
+        "Camera: <...>",
+        "Lighting: <...>",
+        "Action beats: <...>",
+        "Quality: <...>",
+        "Audio (optional): <...>",
+        "",
+        "Repeat the Part block for each segment when Part length is provided.",
+      ].join("\n");
+
       function setOutput(text, isError = false) {
         const el = $("output");
         el.textContent = text;
@@ -388,6 +471,224 @@
         if (!el) return;
         el.textContent = text;
         el.className = isError ? "error" : "";
+      }
+
+      const WORKSPACE_KEY = "gen-video-prompt.gui.workspaces.v1";
+      let workspaces = [];
+      let activeWorkspaceId = "";
+
+      function newWorkspace(name) {
+        return {
+          id: `ws_${Math.random().toString(16).slice(2)}`,
+          name,
+          fields: { duration: "15" },
+          output: "",
+        };
+      }
+
+      function loadWorkspaces() {
+        try {
+          const raw = localStorage.getItem(WORKSPACE_KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object") return null;
+          if (!Array.isArray(parsed.workspaces)) return null;
+          return parsed;
+        } catch {
+          return null;
+        }
+      }
+
+      function saveWorkspaces() {
+        try {
+          localStorage.setItem(
+            WORKSPACE_KEY,
+            JSON.stringify({ activeId: activeWorkspaceId, workspaces })
+          );
+        } catch {}
+      }
+
+      function getActiveWorkspace() {
+        return workspaces.find((ws) => ws.id === activeWorkspaceId) || workspaces[0];
+      }
+
+      function renderWorkspaceTabs() {
+        const container = $("workspaceTabs");
+        if (!container) return;
+        container.innerHTML = "";
+        for (const ws of workspaces) {
+          const btn = document.createElement("div");
+          btn.className = "tab";
+          btn.dataset.active = String(ws.id === activeWorkspaceId);
+          btn.style.display = "flex";
+          btn.style.alignItems = "center";
+          btn.style.gap = "6px";
+          const label = document.createElement("span");
+          label.textContent = ws.name;
+          label.style.whiteSpace = "nowrap";
+          label.style.overflow = "hidden";
+          label.style.textOverflow = "ellipsis";
+          const close = document.createElement("button");
+          close.type = "button";
+          close.textContent = "x";
+          close.title = "Close workspace";
+          close.setAttribute("aria-label", "Close workspace");
+          close.style.marginTop = "0";
+          close.style.padding = "0 6px";
+          close.style.borderColor = "var(--border)";
+          close.style.background = "rgba(0, 0, 0, 0.35)";
+          close.style.color = "var(--muted)";
+          close.style.fontWeight = "700";
+          close.style.lineHeight = "1.2";
+          close.style.fontSize = "12px";
+          close.style.display = workspaces.length > 1 ? "inline-flex" : "none";
+          close.addEventListener("click", (event) => {
+            event.stopPropagation();
+            if (workspaces.length <= 1) return;
+            const keep = workspaces.filter((w) => w.id !== ws.id);
+            workspaces = keep;
+            activeWorkspaceId = keep[0].id;
+            renderWorkspaceTabs();
+            applyPromptFields(getActiveWorkspace().fields);
+            clearPromptImages();
+            saveWorkspaces();
+          });
+          btn.addEventListener("click", () => switchWorkspace(ws.id));
+          btn.appendChild(label);
+          btn.appendChild(close);
+          container.appendChild(btn);
+        }
+        const addBtn = document.createElement("div");
+        addBtn.className = "tab";
+        addBtn.dataset.active = "false";
+        addBtn.style.display = "inline-flex";
+        addBtn.style.alignItems = "center";
+        addBtn.style.justifyContent = "center";
+        addBtn.style.width = "32px";
+        addBtn.style.padding = "8px 0";
+        addBtn.textContent = "+";
+        addBtn.title = "New workspace";
+        addBtn.addEventListener("click", () => {
+          const name = `Workspace ${workspaces.length + 1}`;
+          const ws = newWorkspace(name);
+          workspaces.push(ws);
+          switchWorkspace(ws.id);
+        });
+        container.appendChild(addBtn);
+      }
+
+      function setSelectWithCustom(selectId, customId, value) {
+        const sel = $(selectId);
+        const custom = $(customId);
+        if (!sel || !custom) return;
+        const val = value || "";
+        const hasOption = Array.from(sel.options).some((opt) => opt.value === val);
+        if (!val) {
+          sel.value = "";
+          custom.value = "";
+          custom.style.display = "none";
+          return;
+        }
+        if (hasOption) {
+          sel.value = val;
+          custom.value = "";
+          custom.style.display = "none";
+        } else {
+          sel.value = "custom";
+          custom.value = val;
+          custom.style.display = "block";
+        }
+      }
+
+      function capturePromptFields() {
+        return {
+          promptName: $("promptName").value || "",
+          story: $("story").value || "",
+          mode: $("mode").value || "",
+          duration: pickValue("duration", "durationCustom") || "",
+          resolution: pickValue("resolution", "resolutionCustom") || "",
+          aspect: pickValue("aspect", "aspectCustom") || "",
+          partLengthSeconds: $("partLengthSeconds").value || "",
+          style: $("style").value || "",
+          camera: $("camera").value || "",
+          lighting: $("lighting").value || "",
+          actionBeats: $("actionBeats").value || "",
+          quality: $("quality").value || "",
+          audio: $("audio").value || "",
+        };
+      }
+
+      function applyPromptFields(fields) {
+        if (!fields) return;
+        const set = (id, value) => {
+          if (value === undefined || value === null) return;
+          const el = $(id);
+          if (!el) return;
+          el.value = String(value);
+        };
+        set("promptName", fields.promptName);
+        set("story", fields.story);
+        set("mode", fields.mode || "auto");
+        setSelectWithCustom("duration", "durationCustom", fields.duration || "15");
+        setSelectWithCustom("resolution", "resolutionCustom", fields.resolution);
+        setSelectWithCustom("aspect", "aspectCustom", fields.aspect);
+        set("partLengthSeconds", fields.partLengthSeconds);
+        set("style", fields.style);
+        set("camera", fields.camera);
+        set("lighting", fields.lighting);
+        set("actionBeats", fields.actionBeats);
+        set("quality", fields.quality);
+        set("audio", fields.audio);
+      }
+
+      function clearPromptImages() {
+        const input = $("promptImages");
+        const list = $("promptImagesList");
+        if (input) input.value = "";
+        if (list) list.textContent = "";
+      }
+
+      function saveActiveWorkspaceFields() {
+        const ws = getActiveWorkspace();
+        if (!ws) return;
+        ws.fields = capturePromptFields();
+        saveWorkspaces();
+      }
+
+      function saveActiveWorkspaceOutput(text) {
+        const ws = getActiveWorkspace();
+        if (!ws) return;
+        ws.output = text || "";
+        saveWorkspaces();
+      }
+
+      function switchWorkspace(id) {
+        const current = getActiveWorkspace();
+        if (current) current.fields = capturePromptFields();
+        activeWorkspaceId = id;
+        const next = getActiveWorkspace();
+        applyPromptFields(next ? next.fields : {});
+        clearPromptImages();
+        renderWorkspaceTabs();
+        if (next && next.output) {
+          setOutput(next.output);
+        }
+        saveWorkspaces();
+      }
+
+      function initWorkspaces() {
+        const stored = loadWorkspaces();
+        if (stored && Array.isArray(stored.workspaces) && stored.workspaces.length > 0) {
+          workspaces = stored.workspaces;
+          activeWorkspaceId = stored.activeId && workspaces.some((ws) => ws.id === stored.activeId)
+            ? stored.activeId
+            : workspaces[0].id;
+        } else {
+          workspaces = [newWorkspace("Workspace 1")];
+          activeWorkspaceId = workspaces[0].id;
+        }
+        renderWorkspaceTabs();
+        applyPromptFields(getActiveWorkspace().fields);
       }
 
       function renderImagesList(inputId, listId) {
@@ -640,6 +941,28 @@
         return v;
       }
 
+      function getTotalDurationSeconds() {
+        const raw = pickValue("duration", "durationCustom");
+        if (!raw) return undefined;
+        const num = Number(raw);
+        return Number.isFinite(num) && num > 0 ? num : undefined;
+      }
+
+      function getPartLengthSeconds() {
+        const raw = ($("partLengthSeconds").value || "").trim();
+        if (!raw) return undefined;
+        const num = Number(raw);
+        return Number.isFinite(num) && num > 0 ? num : undefined;
+      }
+
+      function assertValidPartLength() {
+        const total = getTotalDurationSeconds();
+        const part = getPartLengthSeconds();
+        if (part !== undefined && total !== undefined && part >= total) {
+          throw new Error("Part length must be less than total duration.");
+        }
+      }
+
       function wireCustom(selectId, customId) {
         const sel = $(selectId);
         const custom = $(customId);
@@ -690,6 +1013,7 @@
       $("btnGetPrompt").addEventListener("click", async () => {
         $("status").textContent = "Loading...";
         try {
+          assertValidPartLength();
           const name = $("promptName").value;
           const storyWithImages = buildStoryWithImages($("story").value, getImageNames("promptImages"));
           const body = {
@@ -697,7 +1021,8 @@
             arguments: {
               story: storyWithImages,
               mode: $("mode").value || undefined,
-              duration_seconds: pickValue("duration", "durationCustom"),
+              duration_seconds: getTotalDurationSeconds(),
+              part_length_seconds: getPartLengthSeconds(),
               resolution: pickValue("resolution", "resolutionCustom"),
               aspect_ratio: pickValue("aspect", "aspectCustom"),
               style: $("style").value || undefined,
@@ -713,6 +1038,7 @@
           const msg = (data.messages && data.messages[0] && data.messages[0].content) || null;
           const text = msg && msg.type === "text" ? msg.text : JSON.stringify(data, null, 2);
           setOutput(text);
+          saveActiveWorkspaceOutput(text);
           $("status").textContent = "Done.";
         } catch (e) {
           $("status").textContent = "Error.";
@@ -723,13 +1049,15 @@
       $("btnGenerate").addEventListener("click", async () => {
         $("status").textContent = "Generating...";
         try {
+          assertValidPartLength();
           const provider = $("provider").value || "none";
           const storyWithImages = buildStoryWithImages($("story").value, getImageNames("promptImages"));
           const payload = {
             provider,
             story: storyWithImages,
             mode: $("mode").value || undefined,
-            duration_seconds: pickValue("duration", "durationCustom"),
+            duration_seconds: getTotalDurationSeconds(),
+            part_length_seconds: getPartLengthSeconds(),
             resolution: pickValue("resolution", "resolutionCustom"),
             aspect_ratio: pickValue("aspect", "aspectCustom"),
             style: $("style").value || undefined,
@@ -765,6 +1093,7 @@
 
           const data = await api("/api/generate", { method: "POST", body: JSON.stringify(payload) });
           setOutput(data.text || JSON.stringify(data, null, 2));
+          saveActiveWorkspaceOutput(data.text || JSON.stringify(data, null, 2));
           $("status").textContent = "Done.";
         } catch (e) {
           $("status").textContent = "Error.";
@@ -866,6 +1195,7 @@
         try {
           await api("/api/health", { method: "GET" });
           await loadPrompts();
+          initWorkspaces();
           wireCustom("duration", "durationCustom");
           wireCustom("resolution", "resolutionCustom");
           wireCustom("aspect", "aspectCustom");
@@ -876,6 +1206,41 @@
           const promptImagesEl = $("promptImages");
           if (promptImagesEl) {
             promptImagesEl.addEventListener("change", () => renderImagesList("promptImages", "promptImagesList"));
+          }
+          const promptFieldIds = [
+            "promptName",
+            "story",
+            "mode",
+            "duration",
+            "durationCustom",
+            "resolution",
+            "resolutionCustom",
+            "aspect",
+            "aspectCustom",
+            "partLengthSeconds",
+            "style",
+            "camera",
+            "lighting",
+            "actionBeats",
+            "quality",
+            "audio",
+          ];
+          for (const id of promptFieldIds) {
+            const el = $(id);
+            if (!el) continue;
+            el.addEventListener("input", saveActiveWorkspaceFields);
+            el.addEventListener("change", saveActiveWorkspaceFields);
+          }
+          if ($("workspaceTabs")) {
+            $("workspaceTabs").addEventListener("dblclick", () => {
+              const ws = getActiveWorkspace();
+              if (!ws) return;
+              const next = prompt("Workspace name:", ws.name);
+              if (!next) return;
+              ws.name = next.trim();
+              renderWorkspaceTabs();
+              saveWorkspaces();
+            });
           }
 
           const providerEl = $("provider");
@@ -923,6 +1288,9 @@
           updateProvider();
           updateCommandPreset();
           updateCodexModelPreset();
+          const previewEl = $("outputPreview");
+          if (previewEl) previewEl.textContent = PREVIEW_TEMPLATE;
+          setOutputTab("preview");
           setLlmStatus("Server connected. Click Connect to test LLM.");
 
           setOutput("Connected. Choose a prompt and click “Get prompt template”.");
