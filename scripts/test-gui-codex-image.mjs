@@ -50,34 +50,42 @@ function httpJson({ port, method, path: reqPath, body }) {
 }
 
 async function main() {
-  const filePath = process.argv[2] || process.env.IMAGE_PATH;
-  if (!filePath) {
-    console.error("Usage: node scripts/test-gui-codex-image.mjs /path/to/image");
-    console.error("Or set IMAGE_PATH=/path/to/image");
+  const argvPaths = process.argv.slice(2);
+  const envPaths = (process.env.IMAGE_PATH || "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const filePaths = argvPaths.length ? argvPaths : envPaths;
+  if (filePaths.length === 0) {
+    console.error("Usage: node scripts/test-gui-codex-image.mjs /path/to/image1 /path/to/image2");
+    console.error("Or set IMAGE_PATH=/path/to/image1,/path/to/image2");
     process.exit(1);
   }
 
-  const absPath = path.resolve(filePath);
-  const data = fs.readFileSync(absPath);
   const maxBytes = 10 * 1024 * 1024;
-  if (data.length > maxBytes) {
-    throw new Error("Image exceeds 10MB total size limit.");
+  let totalBytes = 0;
+  const images = filePaths.map((filePath) => {
+    const absPath = path.resolve(filePath);
+    const data = fs.readFileSync(absPath);
+    totalBytes += data.length;
+    return {
+      name: path.basename(absPath),
+      type: mimeFor(absPath),
+      data: data.toString("base64"),
+    };
+  });
+  if (totalBytes > maxBytes) {
+    throw new Error("Images exceed 10MB total size limit.");
   }
 
   const port = Number(process.env.PORT ?? "3333");
   const body = {
-    prompt: "Describe this image in one sentence.",
+    prompt: `Describe ${images.length > 1 ? "these images" : "this image"} in one sentence.`,
     provider: "command",
     command: "codex",
     codex_session: process.env.CODEX_SESSION ?? "new",
     ...(process.env.CODEX_MODEL ? { codex_model: process.env.CODEX_MODEL } : {}),
-    images: [
-      {
-        name: path.basename(absPath),
-        type: mimeFor(absPath),
-        data: data.toString("base64"),
-      },
-    ],
+    images,
   };
 
   const res = await httpJson({

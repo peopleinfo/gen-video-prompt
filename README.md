@@ -106,6 +106,12 @@ Then run:
 IMAGE_PATH=/path/to/image.png npm run test:gui:codex-image
 ```
 
+Multiple images:
+
+```bash
+IMAGE_PATH=/path/to/image1.png,/path/to/image2.jpg npm run test:gui:codex-image
+```
+
 Optional:
 
 - `CODEX_MODEL=gpt-5.2-codex` to override the model.
