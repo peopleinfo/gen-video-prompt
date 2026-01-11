@@ -69,11 +69,14 @@ async function readJson(req: http.IncomingMessage, limitBytes = 1_000_000): Prom
 }
 
 function asString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
   }
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return undefined;
 }
 
 function asObject(value: unknown): JsonRecord {

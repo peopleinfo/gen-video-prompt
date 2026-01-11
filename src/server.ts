@@ -193,15 +193,18 @@ function renderPromptTemplate(
 }
 
 function getPromptArg(
-  args: Record<string, string> | undefined,
+  args: Record<string, string | number> | undefined,
   key: string
 ): string | undefined {
   const value = args?.[key];
-  if (typeof value !== "string") {
-    return undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
   }
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return undefined;
 }
 
 function toDocUri(id: string): string {
