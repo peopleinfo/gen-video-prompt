@@ -151,7 +151,7 @@ Resources:
 
 Prompts:
 
-- `structured_video_prompt`: generate a structured Sora 2 video prompt with sections for style, camera, lighting, action beats, quality, and audio.
+- `structured_video_prompt`: generate a structured Sora 2 video prompt with a 3-part prompt (hook → escalation → payoff) plus sections for style, camera, lighting, action beats, quality, and audio.
   - Required args: `story`
   - Optional args: `mode` (`auto`, `story`, `meme`), `duration_seconds`, `resolution`, `aspect_ratio`, `style`, `camera`, `lighting`, `quality`, `action_beats`, `audio`
 - `video_category_suggestion`: suggest a popular video category phrase (e.g. "popular funny videos in USA").

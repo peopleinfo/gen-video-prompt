@@ -368,7 +368,7 @@ async function main(): Promise<void> {
       }
 
       if (method === "POST" && url.pathname === "/api/generate") {
-        const body = await readJson(req);
+        const body = await readJson(req, 20_000_000);
         const story = asString(body.story) ?? "";
         if (!story) {
           json(res, 400, { ok: false, error: "Missing story" });
@@ -377,6 +377,14 @@ async function main(): Promise<void> {
 
         const provider = asString(body.provider) ?? "none";
         const mode = asString(body.mode);
+        const rawImages = Array.isArray(body.images) ? body.images : [];
+        const images = rawImages.filter((img) => img && typeof img === "object") as JsonRecord[];
+        const uploadedFiles: string[] = [];
+
+        if (images.length > 0 && provider !== "command") {
+          json(res, 400, { ok: false, error: "Images are only supported with Codex CLI." });
+          return;
+        }
 
         const promptTemplate = await mcp.request((c) =>
           c.getPrompt({
@@ -409,7 +417,9 @@ async function main(): Promise<void> {
           "You are a prompt writer. Fill in the missing fields and output ONLY the final structured prompt sections.",
           "Do not include '(unspecified)'. If unknown, infer plausible specifics.",
           "Return exactly these sections:",
-          "Prompt:",
+          "Prompt (Part 1 — Hook):",
+          "Prompt (Part 2 — Escalation):",
+          "Prompt (Part 3 — Payoff):",
           "Style:",
           "Camera:",
           "Lighting:",
@@ -447,14 +457,50 @@ async function main(): Promise<void> {
             json(res, 400, { ok: false, error: "Args are disabled for security." });
             return;
           }
+          if (images.length > 0 && command !== "codex") {
+            json(res, 400, { ok: false, error: "Images are only supported with Codex CLI." });
+            return;
+          }
 
-          const codexModel = asString(body.codex_model);
-          const codexSession = asString(body.codex_session) ?? "new";
-          const effectiveArgs = command === "codex" ? buildCodexArgs(codexModel, codexSession, []) : [];
+          try {
+            if (images.length > 0) {
+              const uploadDir = path.join(ROOT_DIR, "tmp", "uploads");
+              await fs.mkdir(uploadDir, { recursive: true });
+              let totalBytes = 0;
+              const maxBytes = 10 * 1024 * 1024;
+              for (const image of images) {
+                const data = asString(image.data) ?? "";
+                if (!data) {
+                  json(res, 400, { ok: false, error: "Invalid image data." });
+                  return;
+                }
+                const mime = asString(image.type) ?? "";
+                const buffer = Buffer.from(data, "base64");
+                totalBytes += buffer.length;
+                if (totalBytes > maxBytes) {
+                  json(res, 400, { ok: false, error: "Total image size exceeds 10MB." });
+                  return;
+                }
+                const filename = `prompt-${Date.now()}-${Math.random().toString(16).slice(2)}${extensionForMime(
+                  mime
+                )}`;
+                const filePath = path.join(uploadDir, filename);
+                await fs.writeFile(filePath, buffer);
+                uploadedFiles.push(filePath);
+              }
+            }
 
-          const out = await runCommandLlm({ command, args: effectiveArgs, input: instruction });
-          json(res, 200, { ok: true, mode: "generated", text: out });
-          return;
+            const codexModel = asString(body.codex_model);
+            const codexSession = asString(body.codex_session) ?? "new";
+            const effectiveArgs =
+              command === "codex" ? buildCodexArgs(codexModel, codexSession, uploadedFiles) : [];
+
+            const out = await runCommandLlm({ command, args: effectiveArgs, input: instruction });
+            json(res, 200, { ok: true, mode: "generated", text: out });
+            return;
+          } finally {
+            await Promise.all(uploadedFiles.map((file) => fs.unlink(file).catch(() => undefined)));
+          }
         }
 
         if (provider === "ollama") {

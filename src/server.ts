@@ -40,13 +40,15 @@ Core approach:
 - If the user requests "meme", "funny", "comedy", or "viral", prioritize a fast hook (first 1–2s), a surprising visual twist, and a highly memeable moment that could be captioned.
 
 Output format when drafting a prompt:
-1) Prompt: one cohesive paragraph describing the scene.
-2) Style: aesthetic, mood, palette, film stock or realism level.
-3) Camera: lens, framing, movement, and shot scale.
-4) Lighting: key source, time of day, practicals, atmosphere.
-5) Action beats: short timeline or beat list for the clip.
-6) Quality: resolution, fps, and technical quality notes.
-7) Audio (optional): diegetic sound cues if relevant.
+1) Prompt (Part 1 — Hook): the opening beat; establish subject, setting, and intent.
+2) Prompt (Part 2 — Escalation): the change/twist; visible consequence or complication.
+3) Prompt (Part 3 — Payoff): the resolution; final striking visual beat (often loopable).
+4) Style: aesthetic, mood, palette, film stock or realism level.
+5) Camera: lens, framing, movement, and shot scale.
+6) Lighting: key source, time of day, practicals, atmosphere.
+7) Action beats: short timeline or beat list for the clip.
+8) Quality: resolution, fps, and technical quality notes.
+9) Audio (optional): diegetic sound cues if relevant.
 
 Notes:
 - Resolution and duration are API parameters. Include recommended values but do not claim they are controlled by text alone.
@@ -76,7 +78,9 @@ Include any user constraints:
 - Audio: {{audio}}
 
 Output format:
-Prompt: one cohesive paragraph describing the scene.
+Prompt (Part 1 — Hook): establish subject, setting, intent.
+Prompt (Part 2 — Escalation): the twist/complication with visible consequence.
+Prompt (Part 3 — Payoff): the resolution and final striking beat (often loopable).
 Style: aesthetic, mood, palette, film stock or realism level.
 Camera: lens, framing, movement, and shot scale.
 Lighting: key source, time of day, practicals, atmosphere.
@@ -88,7 +92,7 @@ Audio (optional): diegetic sound cues if relevant.
 const PROMPT_NAME = "structured_video_prompt";
 const PROMPT_TITLE = "Structured Sora 2 video prompt";
 const PROMPT_DESCRIPTION =
-  "Generate a cinematic Sora 2 prompt with structured sections (style, camera, lighting, action beats, quality).";
+  "Generate a cinematic Sora 2 prompt with structured sections (3-part prompt, style, camera, lighting, action beats, quality).";
 
 const CATEGORY_PROMPT_NAME = "video_category_suggestion";
 const CATEGORY_PROMPT_TITLE = "Video category suggestion";

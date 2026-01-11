@@ -258,6 +258,9 @@
 
           <label for="story">Story / request</label>
           <textarea id="story" placeholder="Describe what you want..."></textarea>
+          <label for="promptImages">Images (optional)</label>
+          <input id="promptImages" type="file" accept="image/*" multiple />
+          <div id="promptImagesList" style="margin-top: 6px; font-size: 12px; color: var(--muted)"></div>
 
           <label for="mode">Mode</label>
           <select id="mode">
@@ -387,9 +390,9 @@
         el.className = isError ? "error" : "";
       }
 
-      function renderChatImagesList() {
-        const input = $("chatImages");
-        const list = $("chatImagesList");
+      function renderImagesList(inputId, listId) {
+        const input = $(inputId);
+        const list = $(listId);
         if (!input || !list) return;
         const files = input.files ? Array.from(input.files) : [];
         if (!files.length) {
@@ -437,7 +440,7 @@
               if (i !== index) dt.items.add(f);
             });
             input.files = dt.files;
-            renderChatImagesList();
+            renderImagesList(inputId, listId);
           });
           row.appendChild(name);
           row.appendChild(remove);
@@ -445,8 +448,14 @@
         });
       }
 
-      async function readChatImages() {
-        const input = $("chatImages");
+      function getImageNames(inputId) {
+        const input = $(inputId);
+        if (!input || !input.files) return [];
+        return Array.from(input.files).map((file) => file.name);
+      }
+
+      async function readImages(inputId) {
+        const input = $(inputId);
         if (!input || !input.files || input.files.length === 0) return [];
         const files = Array.from(input.files);
         const maxBytes = 10 * 1024 * 1024;
@@ -478,6 +487,18 @@
               })
           )
         );
+      }
+
+      function buildStoryWithImages(story, imageNames) {
+        const base = (story || "").trim();
+        if (!imageNames || imageNames.length === 0) return base;
+        const labels = ["Character reference", "Start frame reference", "End frame reference"];
+        const lines = imageNames.map((name, index) => {
+          const label = labels[index] || "Additional reference";
+          return `- ${label}: ${name}`;
+        });
+        const header = "Image references (use filenames as cues for character/start/end frames):";
+        return [base, "", header, ...lines].filter(Boolean).join("\n");
       }
 
       function getCommandValue() {
@@ -670,10 +691,11 @@
         $("status").textContent = "Loading...";
         try {
           const name = $("promptName").value;
+          const storyWithImages = buildStoryWithImages($("story").value, getImageNames("promptImages"));
           const body = {
             name,
             arguments: {
-              story: $("story").value,
+              story: storyWithImages,
               mode: $("mode").value || undefined,
               duration_seconds: pickValue("duration", "durationCustom"),
               resolution: pickValue("resolution", "resolutionCustom"),
@@ -702,9 +724,10 @@
         $("status").textContent = "Generating...";
         try {
           const provider = $("provider").value || "none";
+          const storyWithImages = buildStoryWithImages($("story").value, getImageNames("promptImages"));
           const payload = {
             provider,
-            story: $("story").value,
+            story: storyWithImages,
             mode: $("mode").value || undefined,
             duration_seconds: pickValue("duration", "durationCustom"),
             resolution: pickValue("resolution", "resolutionCustom"),
@@ -721,6 +744,12 @@
             payload.command = getCommandValue();
             payload.codex_model = getCodexModelValue() || undefined;
             payload.codex_session = getCodexSessionMode() || undefined;
+            if (payload.command === "codex") {
+              const images = await readImages("promptImages");
+              if (images.length) {
+                payload.images = images;
+              }
+            }
           }
           if (provider === "ollama") {
             payload.base_url = $("ollamaBaseUrl").value || undefined;
@@ -822,7 +851,7 @@
             return;
           }
           setOutput("Sending...");
-          const images = await readChatImages();
+          const images = await readImages("chatImages");
           const data = await api("/api/chat", {
             method: "POST",
             body: JSON.stringify({ prompt, images, ...collectLlmConfig() }),
@@ -842,7 +871,11 @@
           wireCustom("aspect", "aspectCustom");
           const chatImagesEl = $("chatImages");
           if (chatImagesEl) {
-            chatImagesEl.addEventListener("change", renderChatImagesList);
+            chatImagesEl.addEventListener("change", () => renderImagesList("chatImages", "chatImagesList"));
+          }
+          const promptImagesEl = $("promptImages");
+          if (promptImagesEl) {
+            promptImagesEl.addEventListener("change", () => renderImagesList("promptImages", "promptImagesList"));
           }
 
           const providerEl = $("provider");
