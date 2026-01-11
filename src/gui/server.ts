@@ -12,10 +12,12 @@ const HOST = process.env.HOST ?? "127.0.0.1";
 const PORT = Number(process.env.PORT ?? "3333");
 const ENABLE_COMMAND_LLM = process.env.ENABLE_COMMAND_LLM === "1";
 const ENABLE_HTTP_LLM = process.env.ENABLE_HTTP_LLM === "1";
+const MCP_SERVER_DEV = process.env.MCP_SERVER_DEV === "1";
 
 // `tsc` does not copy static assets into `dist/`, so serve the UI directly from `src/`.
 const PUBLIC_DIR = path.join(ROOT_DIR, "src", "gui", "public");
 const MCP_SERVER_PATH = path.join(ROOT_DIR, "dist", "server.js");
+const MCP_SERVER_SRC_PATH = path.join(ROOT_DIR, "src", "server.ts");
 
 function json(res: http.ServerResponse, statusCode: number, payload: JsonRecord): void {
   const body = JSON.stringify(payload, null, 2);
@@ -115,7 +117,7 @@ function createMcpClient(): {
 } {
   const transport = new StdioClientTransport({
     command: "node",
-    args: [MCP_SERVER_PATH],
+    args: MCP_SERVER_DEV ? ["--loader", "tsx", MCP_SERVER_SRC_PATH] : [MCP_SERVER_PATH],
     cwd: ROOT_DIR,
     stderr: "inherit",
   });
@@ -143,13 +145,6 @@ function createMcpClient(): {
   };
 
   return { request, close };
-}
-
-function normalizeCommandArgs(command: string, args: string[]): string[] {
-  if (command === "codex" && args.length === 0) {
-    return ["exec", "--color", "never", "-"];
-  }
-  return args;
 }
 
 async function runCommandLlm(params: {
@@ -410,12 +405,18 @@ async function main(): Promise<void> {
             json(res, 400, { ok: false, error: "Missing command for provider=command" });
             return;
           }
+          if (args.length > 0) {
+            json(res, 400, { ok: false, error: "Args are disabled for security." });
+            return;
+          }
 
-          const out = await runCommandLlm({
-            command,
-            args: normalizeCommandArgs(command, args),
-            input: instruction,
-          });
+          const codexModel = asString(body.codex_model);
+          const effectiveArgs =
+            command === "codex"
+              ? [...(codexModel ? ["-m", codexModel] : []), "exec", "--color", "never", "-"]
+              : [];
+
+          const out = await runCommandLlm({ command, args: effectiveArgs, input: instruction });
           json(res, 200, { ok: true, mode: "generated", text: out });
           return;
         }
@@ -500,12 +501,18 @@ async function main(): Promise<void> {
             json(res, 400, { ok: false, error: "Missing command for provider=command" });
             return;
           }
+          if (args.length > 0) {
+            json(res, 400, { ok: false, error: "Args are disabled for security." });
+            return;
+          }
 
-          const out = await runCommandLlm({
-            command,
-            args: normalizeCommandArgs(command, args),
-            input: prompt,
-          });
+          const codexModel = asString(body.codex_model);
+          const effectiveArgs =
+            command === "codex"
+              ? [...(codexModel ? ["-m", codexModel] : []), "exec", "--color", "never", "-"]
+              : [];
+
+          const out = await runCommandLlm({ command, args: effectiveArgs, input: prompt });
           json(res, 200, { ok: true, mode: "chat", text: out });
           return;
         }

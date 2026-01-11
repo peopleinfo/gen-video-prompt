@@ -139,7 +139,7 @@
   <body>
     <header>
       <h1>gen-video-prompt GUI</h1>
-      <p>Local UI for your MCP server: prompts, tools, and resources. (This does not run an LLM.)</p>
+      <p>Local UI for your MCP server: prompts, tools, and resources.</p>
     </header>
 
     <main>
@@ -169,16 +169,30 @@
             </select>
 
             <div id="codexModelRow">
-              <label for="codexModel">Codex model (optional)</label>
-              <input id="codexModel" placeholder="e.g. o3" />
+              <label for="codexModelPreset">Select model and effort</label>
+              <select id="codexModelPreset">
+                <option value="">(default)</option>
+                <option value="gpt-5.2-codex">gpt-5.2-codex</option>
+                <option value="gpt-5.1-codex-max">gpt-5.1-codex-max</option>
+                <option value="gpt-5.1-codex-mini">gpt-5.1-codex-mini</option>
+                <option value="gpt-5.2">gpt-5.2</option>
+                <option value="custom">Custom...</option>
+              </select>
+              <div id="codexModelCustom" style="display: none">
+                <label for="codexModel">Custom model</label>
+                <input id="codexModel" placeholder="e.g. gpt-4.1" />
+              </div>
+              <div style="margin-top: 6px; font-size: 12px; color: var(--muted)">
+                Access legacy models with Custom or via config.toml.
+              </div>
             </div>
 
             <div id="commandCustom" style="display: none">
               <label for="cmd">Command</label>
               <input id="cmd" placeholder="e.g. my-llm-cli" />
             </div>
-            <label for="cmdArgs">Args (space-separated)</label>
-            <input id="cmdArgs" placeholder='e.g. exec --color never - (for Codex)' />
+            <!-- <label for="cmdArgs">Args (space-separated)</label>
+            <input id="cmdArgs" disabled placeholder="Disabled for security" /> -->
             <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
               Enable by starting GUI with <code>ENABLE_COMMAND_LLM=1</code>.
             </div>
@@ -367,28 +381,22 @@
         return $("cmd").value || "";
       }
 
-      function getCommandArgs() {
-        const raw = $("cmdArgs").value || "";
-        let args = raw.trim() ? words(raw) : [];
+      function getCodexModelValue() {
         const preset = $("commandPreset");
-        const isCodex = preset && preset.value === "codex";
-        if (!args.length && isCodex) {
-          args = ["exec", "--color", "never", "-"];
+        if (!preset || preset.value !== "codex") return "";
+        const modelPreset = $("codexModelPreset");
+        if (!modelPreset) return "";
+        if (modelPreset.value === "custom") {
+          return ($("codexModel").value || "").trim();
         }
-        if (isCodex) {
-          const model = ($("codexModel").value || "").trim();
-          if (model && !args.includes("-m") && !args.includes("--model")) {
-            args = ["-m", model, ...args];
-          }
-        }
-        return args;
+        return (modelPreset.value || "").trim();
       }
 
       function collectLlmConfig() {
         return {
           provider: $("provider").value || "none",
           command: getCommandValue(),
-          args: getCommandArgs(),
+          codex_model: getCodexModelValue(),
           ollama: {
             base_url: $("ollamaBaseUrl").value || "",
             model: $("ollamaModel").value || "",
@@ -445,9 +453,16 @@
           "commandPreset",
           settings.commandPreset || (settings.cmd ? (settings.cmd === "codex" ? "codex" : "custom") : "codex")
         );
-        set("codexModel", settings.codexModel);
+        const codexModel = typeof settings.codexModel === "string" ? settings.codexModel.trim() : "";
+        const presetFromModel = codexModel
+          ? ["gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini", "gpt-5.2"].includes(codexModel)
+            ? codexModel
+            : "custom"
+          : "";
+        set("codexModelPreset", settings.codexModelPreset || presetFromModel);
+        set("codexModel", codexModel);
         set("cmd", settings.cmd);
-        set("cmdArgs", settings.cmdArgs);
+        set("cmdArgs", "");
         set("ollamaBaseUrl", settings.ollamaBaseUrl);
         set("ollamaModel", settings.ollamaModel);
         set("openaiBaseUrl", settings.openaiBaseUrl);
@@ -459,9 +474,10 @@
         return {
           provider: $("provider").value || "none",
           commandPreset: $("commandPreset").value || "codex",
+          codexModelPreset: $("codexModelPreset").value || "",
           codexModel: $("codexModel").value || "",
           cmd: $("cmd").value || "",
-          cmdArgs: $("cmdArgs").value || "",
+          cmdArgs: "",
           ollamaBaseUrl: $("ollamaBaseUrl").value || "",
           ollamaModel: $("ollamaModel").value || "",
           openaiBaseUrl: $("openaiBaseUrl").value || "",
@@ -588,7 +604,7 @@
 
           if (provider === "command") {
             payload.command = getCommandValue();
-            payload.args = getCommandArgs();
+            payload.codex_model = getCodexModelValue() || undefined;
           }
           if (provider === "ollama") {
             payload.base_url = $("ollamaBaseUrl").value || undefined;
@@ -713,6 +729,8 @@
           const cmdPresetEl = $("commandPreset");
           const cmdCustomEl = $("commandCustom");
           const codexModelRowEl = $("codexModelRow");
+          const codexModelPresetEl = $("codexModelPreset");
+          const codexModelCustomEl = $("codexModelCustom");
           const ollamaEl = $("providerOllama");
           const openaiEl = $("providerOpenAi");
           const updateCommandPreset = () => {
@@ -720,6 +738,10 @@
             const isCustom = cmdPresetEl.value === "custom";
             cmdCustomEl.style.display = isCustom ? "block" : "none";
             codexModelRowEl.style.display = isCustom ? "none" : "block";
+          };
+          const updateCodexModelPreset = () => {
+            if (!codexModelPresetEl || !codexModelCustomEl) return;
+            codexModelCustomEl.style.display = codexModelPresetEl.value === "custom" ? "block" : "none";
           };
           const updateProvider = () => {
             cmdEl.style.display = providerEl.value === "command" ? "block" : "none";
@@ -730,9 +752,13 @@
           if (cmdPresetEl) {
             cmdPresetEl.addEventListener("change", updateCommandPreset);
           }
+          if (codexModelPresetEl) {
+            codexModelPresetEl.addEventListener("change", updateCodexModelPreset);
+          }
           applySettings(loadSettings());
           updateProvider();
           updateCommandPreset();
+          updateCodexModelPreset();
           setLlmStatus("Server connected. Click Connect to test LLM.");
 
           setOutput("Connected. Choose a prompt and click “Get prompt template”.");

@@ -11,6 +11,11 @@
     "gui:llm": "ENABLE_COMMAND_LLM=1 npm run gui",
     "gui:http-llm": "ENABLE_HTTP_LLM=1 npm run gui",
     "gui:all-llm": "ENABLE_COMMAND_LLM=1 ENABLE_HTTP_LLM=1 npm run gui",
+    "gui:restart": "node scripts/restart-gui.mjs",
+    "gui:watch": "MCP_SERVER_DEV=1 tsx watch src/gui/server.ts",
+    "gui:watch:llm": "ENABLE_COMMAND_LLM=1 MCP_SERVER_DEV=1 tsx watch src/gui/server.ts",
+    "gui:watch:all-llm": "ENABLE_COMMAND_LLM=1 ENABLE_HTTP_LLM=1 MCP_SERVER_DEV=1 tsx watch src/gui/server.ts",
+    "mcp:watch": "tsx watch src/server.ts",
     "test:gui": "npm run build && node scripts/test-gui.mjs",
     "dev": "tsx src/server.ts",
     "rename:data": "tsx src/rename-data.ts"

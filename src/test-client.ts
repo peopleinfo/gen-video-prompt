@@ -22,6 +22,8 @@ function usage(): string {
     "  npx tsx src/test-client.ts --prompt \"...\" [--name structured_video_prompt]",
     "",
     "Optional args:",
+    "  -h, --help",
+    "  --name <promptName>",
     "  --mode <auto|story|meme>",
     "  --duration <seconds>",
     "  --resolution <WxH>",
@@ -66,7 +68,13 @@ function parseArgs(argv: string[]): CliArgs {
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv.includes("--help") || argv.includes("-h")) {
+    process.stdout.write(`${usage()}\n`);
+    return;
+  }
+
+  const args = parseArgs(argv);
 
   const transport = new StdioClientTransport({
     command: "node",
