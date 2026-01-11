@@ -145,6 +145,13 @@ function createMcpClient(): {
   return { request, close };
 }
 
+function normalizeCommandArgs(command: string, args: string[]): string[] {
+  if (command === "codex" && args.length === 0) {
+    return ["exec", "--color", "never", "-"];
+  }
+  return args;
+}
+
 async function runCommandLlm(params: {
   command: string;
   args: string[];
@@ -404,7 +411,11 @@ async function main(): Promise<void> {
             return;
           }
 
-          const out = await runCommandLlm({ command, args, input: instruction });
+          const out = await runCommandLlm({
+            command,
+            args: normalizeCommandArgs(command, args),
+            input: instruction,
+          });
           json(res, 200, { ok: true, mode: "generated", text: out });
           return;
         }
@@ -490,7 +501,11 @@ async function main(): Promise<void> {
             return;
           }
 
-          const out = await runCommandLlm({ command, args, input: prompt });
+          const out = await runCommandLlm({
+            command,
+            args: normalizeCommandArgs(command, args),
+            input: prompt,
+          });
           json(res, 200, { ok: true, mode: "chat", text: out });
           return;
         }
@@ -504,8 +519,9 @@ async function main(): Promise<void> {
             });
             return;
           }
-          const baseUrl = asString(body.ollama?.base_url) ?? "";
-          const model = asString(body.ollama?.model) ?? "";
+          const ollama = asObject(body.ollama);
+          const baseUrl = asString(ollama.base_url) ?? "";
+          const model = asString(ollama.model) ?? "";
           if (!baseUrl) {
             json(res, 400, { ok: false, error: "Missing base_url for provider=ollama" });
             return;
@@ -528,9 +544,10 @@ async function main(): Promise<void> {
             });
             return;
           }
-          const baseUrl = asString(body.openai_compatible?.base_url) ?? "";
-          const model = asString(body.openai_compatible?.model) ?? "";
-          const apiKey = asString(body.openai_compatible?.api_key);
+          const openai = asObject(body.openai_compatible);
+          const baseUrl = asString(openai.base_url) ?? "";
+          const model = asString(openai.model) ?? "";
+          const apiKey = asString(openai.api_key);
           if (!baseUrl) {
             json(res, 400, { ok: false, error: "Missing base_url for provider=openai_compatible" });
             return;
