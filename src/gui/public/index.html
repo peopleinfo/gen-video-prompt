@@ -168,6 +168,11 @@
               <option value="custom">Other CLI</option>
             </select>
 
+            <div id="codexModelRow">
+              <label for="codexModel">Codex model (optional)</label>
+              <input id="codexModel" placeholder="e.g. o3" />
+            </div>
+
             <div id="commandCustom" style="display: none">
               <label for="cmd">Command</label>
               <input id="cmd" placeholder="e.g. my-llm-cli" />
@@ -364,10 +369,19 @@
 
       function getCommandArgs() {
         const raw = $("cmdArgs").value || "";
-        if (raw.trim()) return words(raw);
+        let args = raw.trim() ? words(raw) : [];
         const preset = $("commandPreset");
-        if (preset && preset.value === "codex") return ["exec", "--color", "never", "-"];
-        return [];
+        const isCodex = preset && preset.value === "codex";
+        if (!args.length && isCodex) {
+          args = ["exec", "--color", "never", "-"];
+        }
+        if (isCodex) {
+          const model = ($("codexModel").value || "").trim();
+          if (model && !args.includes("-m") && !args.includes("--model")) {
+            args = ["-m", model, ...args];
+          }
+        }
+        return args;
       }
 
       function collectLlmConfig() {
@@ -431,6 +445,7 @@
           "commandPreset",
           settings.commandPreset || (settings.cmd ? (settings.cmd === "codex" ? "codex" : "custom") : "codex")
         );
+        set("codexModel", settings.codexModel);
         set("cmd", settings.cmd);
         set("cmdArgs", settings.cmdArgs);
         set("ollamaBaseUrl", settings.ollamaBaseUrl);
@@ -444,6 +459,7 @@
         return {
           provider: $("provider").value || "none",
           commandPreset: $("commandPreset").value || "codex",
+          codexModel: $("codexModel").value || "",
           cmd: $("cmd").value || "",
           cmdArgs: $("cmdArgs").value || "",
           ollamaBaseUrl: $("ollamaBaseUrl").value || "",
@@ -696,11 +712,14 @@
           const cmdEl = $("providerCommand");
           const cmdPresetEl = $("commandPreset");
           const cmdCustomEl = $("commandCustom");
+          const codexModelRowEl = $("codexModelRow");
           const ollamaEl = $("providerOllama");
           const openaiEl = $("providerOpenAi");
           const updateCommandPreset = () => {
-            if (!cmdPresetEl || !cmdCustomEl) return;
-            cmdCustomEl.style.display = cmdPresetEl.value === "custom" ? "block" : "none";
+            if (!cmdPresetEl || !cmdCustomEl || !codexModelRowEl) return;
+            const isCustom = cmdPresetEl.value === "custom";
+            cmdCustomEl.style.display = isCustom ? "block" : "none";
+            codexModelRowEl.style.display = isCustom ? "none" : "block";
           };
           const updateProvider = () => {
             cmdEl.style.display = providerEl.value === "command" ? "block" : "none";
