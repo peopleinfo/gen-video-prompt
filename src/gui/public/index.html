@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>gen-video-prompt GUI</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b0d12;
+        --panel: #141828;
+        --text: #e9eefc;
+        --muted: #a9b2cc;
+        --border: rgba(255, 255, 255, 0.12);
+        --accent: #6aa6ff;
+        --danger: #ff6a6a;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent);
+      }
+      header h1 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      header p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 420px 1fr;
+        gap: 12px;
+        padding: 12px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .panel h2 {
+        margin: 0;
+        padding: 12px 14px;
+        font-size: 13px;
+        border-bottom: 1px solid var(--border);
+      }
+      .panel .content {
+        padding: 12px 14px;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin: 10px 0 6px;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.25);
+        color: var(--text);
+        outline: none;
+      }
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+      button {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(106, 166, 255, 0.18);
+        color: var(--text);
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button:hover {
+        border-color: rgba(106, 166, 255, 0.55);
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .tabs {
+        display: flex;
+        gap: 10px;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      .tab {
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.18);
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .tab[data-active="true"] {
+        color: var(--text);
+        border-color: rgba(106, 166, 255, 0.55);
+        background: rgba(106, 166, 255, 0.18);
+      }
+      pre {
+        margin: 0;
+        padding: 14px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .error {
+        color: var(--danger);
+      }
+      @media (max-width: 980px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>gen-video-prompt GUI</h1>
+      <p>Local UI for your MCP server: prompts, tools, and resources. (This does not run an LLM.)</p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <div class="tabs">
+          <div class="tab" id="tab-setup" data-active="true">Setup LLM</div>
+          <div class="tab" id="tab-chat" data-active="false">Chat</div>
+          <div class="tab" id="tab-prompts" data-active="false">Prompts</div>
+          <div class="tab" id="tab-docs" data-active="false">Docs</div>
+          <div class="tab" id="tab-tools" data-active="false">Tools</div>
+        </div>
+
+        <div class="content" id="view-setup">
+          <label for="provider">Fill missing fields</label>
+          <select id="provider">
+            <option value="none">Template only (no LLM)</option>
+            <option value="command" selected>Local CLI</option>
+            <option value="ollama">Ollama (HTTP)</option>
+            <option value="openai_compatible">OpenAI-compatible API</option>
+          </select>
+
+          <div id="providerCommand" style="display: none">
+            <label for="commandPreset">CLI</label>
+            <select id="commandPreset">
+              <option value="codex" selected>Codex CLI</option>
+              <option value="custom">Other CLI</option>
+            </select>
+
+            <div id="commandCustom" style="display: none">
+              <label for="cmd">Command</label>
+              <input id="cmd" placeholder="e.g. my-llm-cli" />
+            </div>
+            <label for="cmdArgs">Args (space-separated)</label>
+            <input id="cmdArgs" placeholder='e.g. exec --color never - (for Codex)' />
+            <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
+              Enable by starting GUI with <code>ENABLE_COMMAND_LLM=1</code>.
+            </div>
+          </div>
+
+          <div id="providerOllama" style="display: none">
+            <label for="ollamaBaseUrl">Base URL</label>
+            <input id="ollamaBaseUrl" placeholder="http://127.0.0.1:11434" />
+            <label for="ollamaModel">Model</label>
+            <input id="ollamaModel" placeholder="e.g. llama3.2" />
+            <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
+              Enable by starting GUI with <code>ENABLE_HTTP_LLM=1</code>.
+            </div>
+          </div>
+
+          <div id="providerOpenAi" style="display: none">
+            <label for="openaiBaseUrl">Base URL</label>
+            <input id="openaiBaseUrl" placeholder="https://api.openai.com" />
+            <label for="openaiModel">Model</label>
+            <input id="openaiModel" placeholder="e.g. gpt-4o-mini" />
+            <label for="openaiApiKey">API key</label>
+            <input id="openaiApiKey" placeholder="sk-..." />
+            <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
+              Enable by starting GUI with <code>ENABLE_HTTP_LLM=1</code>. API key is stored in your browser localStorage.
+            </div>
+          </div>
+
+          <div class="row" style="margin-top: 16px; align-items: center">
+            <div>
+              <label for="llmStatus">LLM connection</label>
+              <div id="llmStatus" style="font-size: 12px; color: var(--muted)">(not checked)</div>
+            </div>
+            <div style="display: flex; align-items: flex-end; gap: 8px">
+              <button id="btnConnect">Connect</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="content" id="view-chat" style="display: none">
+          <label for="chatPrompt">Message</label>
+          <textarea id="chatPrompt" placeholder="Ask the LLM a quick question..."></textarea>
+          <button id="btnChatSend">Send</button>
+          <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
+            Response shows in the Output panel.
+          </div>
+        </div>
+
+        <div class="content" id="view-prompts" style="display: none">
+          <label for="promptName">Prompt</label>
+          <select id="promptName"></select>
+
+          <label for="story">Story / request</label>
+          <textarea id="story" placeholder="Describe what you want..."></textarea>
+
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <option value="auto" selected>Auto-detect</option>
+            <option value="story">Storytelling</option>
+            <option value="meme">Meme / Funny / Viral</option>
+          </select>
+
+          <div class="row">
+            <div>
+              <label for="duration">Duration (seconds)</label>
+              <select id="duration">
+                <option value="" selected>(leave blank)</option>
+                <option value="4">4</option>
+                <option value="8">8</option>
+                <option value="12">12</option>
+                <option value="custom">Custom…</option>
+              </select>
+              <input id="durationCustom" placeholder="Enter duration" style="display: none; margin-top: 8px" />
+            </div>
+            <div>
+              <label for="resolution">Resolution</label>
+              <select id="resolution">
+                <option value="" selected>(default 1920x1080)</option>
+                <option value="1920x1080">1920x1080</option>
+                <option value="1280x720">1280x720</option>
+                <option value="720x1280">720x1280</option>
+                <option value="1792x1024">1792x1024</option>
+                <option value="1024x1792">1024x1792</option>
+                <option value="custom">Custom…</option>
+              </select>
+              <input id="resolutionCustom" placeholder="Enter resolution (e.g. 1920x1080)" style="display: none; margin-top: 8px" />
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="aspect">Aspect ratio</label>
+              <select id="aspect">
+                <option value="" selected>(leave blank)</option>
+                <option value="16:9 landscape">16:9 landscape</option>
+                <option value="9:16 portrait">9:16 portrait</option>
+                <option value="1:1 square">1:1 square</option>
+                <option value="custom">Custom…</option>
+              </select>
+              <input id="aspectCustom" placeholder="Enter aspect ratio" style="display: none; margin-top: 8px" />
+            </div>
+            <div>
+              <label for="style">Style</label>
+              <input id="style" placeholder="cinematic realism, 65mm..." />
+            </div>
+          </div>
+
+          <label for="camera">Camera</label>
+          <input id="camera" placeholder="lens, framing, movement..." />
+
+          <label for="lighting">Lighting</label>
+          <input id="lighting" placeholder="time of day, key light..." />
+
+          <label for="actionBeats">Action beats</label>
+          <input id="actionBeats" placeholder="beat 1 → beat 2 → beat 3..." />
+
+          <label for="quality">Quality</label>
+          <input id="quality" placeholder="fps, grain, realism..." />
+
+          <label for="audio">Audio</label>
+          <input id="audio" placeholder="rain, distant traffic..." />
+
+          <button id="btnGetPrompt">Get template</button>
+          <button id="btnGenerate" style="margin-left: 8px">Generate (fill)</button>
+          <div id="status" style="margin-top: 10px; font-size: 12px; color: var(--muted)"></div>
+        </div>
+
+        <div class="content" id="view-docs" style="display: none">
+          <button id="btnLoadDocs">List documents</button>
+          <label for="docUri">Resource URI</label>
+          <select id="docUri"></select>
+          <button id="btnReadDoc">Read document</button>
+          <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
+            Tip: PDFs may be large; the viewer will show the start of the extracted text.
+          </div>
+        </div>
+
+        <div class="content" id="view-tools" style="display: none">
+          <button id="btnLoadTools">List tools</button>
+          <label for="toolName">Tool</label>
+          <select id="toolName"></select>
+          <label for="toolArgs">Arguments (JSON)</label>
+          <textarea id="toolArgs" placeholder="{\n  \"id\": \"some-doc.md\"\n}"></textarea>
+          <button id="btnCallTool">Call tool</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Output</h2>
+        <pre id="output">(ready)</pre>
+      </section>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      function setTab(active) {
+        const views = ["setup", "chat", "prompts", "docs", "tools"];
+        for (const v of views) {
+          $("tab-" + v).dataset.active = String(v === active);
+          $("view-" + v).style.display = v === active ? "block" : "none";
+        }
+      }
+
+      $("tab-setup").addEventListener("click", () => setTab("setup"));
+      $("tab-chat").addEventListener("click", () => setTab("chat"));
+      $("tab-prompts").addEventListener("click", () => setTab("prompts"));
+      $("tab-docs").addEventListener("click", () => setTab("docs"));
+      $("tab-tools").addEventListener("click", () => setTab("tools"));
+
+      function setOutput(text, isError = false) {
+        const el = $("output");
+        el.textContent = text;
+        el.className = isError ? "error" : "";
+      }
+
+      function setLlmStatus(text, isError = false) {
+        const el = $("llmStatus");
+        if (!el) return;
+        el.textContent = text;
+        el.className = isError ? "error" : "";
+      }
+
+      function getCommandValue() {
+        const preset = $("commandPreset");
+        if (preset && preset.value === "codex") return "codex";
+        return $("cmd").value || "";
+      }
+
+      function getCommandArgs() {
+        const raw = $("cmdArgs").value || "";
+        if (raw.trim()) return words(raw);
+        const preset = $("commandPreset");
+        if (preset && preset.value === "codex") return ["exec", "--color", "never", "-"];
+        return [];
+      }
+
+      function collectLlmConfig() {
+        return {
+          provider: $("provider").value || "none",
+          command: getCommandValue(),
+          args: getCommandArgs(),
+          ollama: {
+            base_url: $("ollamaBaseUrl").value || "",
+            model: $("ollamaModel").value || "",
+          },
+          openai_compatible: {
+            base_url: $("openaiBaseUrl").value || "",
+            model: $("openaiModel").value || "",
+            api_key: $("openaiApiKey").value || "",
+          },
+        };
+      }
+
+      async function api(path, options) {
+        const res = await fetch(path, {
+          ...options,
+          headers: { "content-type": "application/json", ...(options && options.headers) },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          const msg = data && data.error ? data.error : "Request failed";
+          throw new Error(msg);
+        }
+        return data;
+      }
+
+      const SETTINGS_KEY = "gen-video-prompt.gui.settings.v1";
+
+      function loadSettings() {
+        try {
+          const raw = localStorage.getItem(SETTINGS_KEY);
+          if (!raw) return {};
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === "object" ? parsed : {};
+        } catch {
+          return {};
+        }
+      }
+
+      function saveSettings(settings) {
+        try {
+          localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        } catch {}
+      }
+
+      function applySettings(settings) {
+        const set = (id, value) => {
+          if (value === undefined || value === null) return;
+          const el = $(id);
+          if (!el) return;
+          el.value = String(value);
+        };
+        set("provider", settings.provider);
+        set(
+          "commandPreset",
+          settings.commandPreset || (settings.cmd ? (settings.cmd === "codex" ? "codex" : "custom") : "codex")
+        );
+        set("cmd", settings.cmd);
+        set("cmdArgs", settings.cmdArgs);
+        set("ollamaBaseUrl", settings.ollamaBaseUrl);
+        set("ollamaModel", settings.ollamaModel);
+        set("openaiBaseUrl", settings.openaiBaseUrl);
+        set("openaiModel", settings.openaiModel);
+        set("openaiApiKey", settings.openaiApiKey);
+      }
+
+      function captureSettings() {
+        return {
+          provider: $("provider").value || "none",
+          commandPreset: $("commandPreset").value || "codex",
+          cmd: $("cmd").value || "",
+          cmdArgs: $("cmdArgs").value || "",
+          ollamaBaseUrl: $("ollamaBaseUrl").value || "",
+          ollamaModel: $("ollamaModel").value || "",
+          openaiBaseUrl: $("openaiBaseUrl").value || "",
+          openaiModel: $("openaiModel").value || "",
+          openaiApiKey: $("openaiApiKey").value || "",
+        };
+      }
+
+      function words(str) {
+        const s = (str || "").trim();
+        if (!s) return [];
+        return s.split(/\s+/g);
+      }
+
+      function pickValue(selectId, customId) {
+        const sel = $(selectId);
+        const custom = $(customId);
+        const v = sel ? sel.value : "";
+        if (!v) return undefined;
+        if (v === "custom") {
+          const cv = custom ? custom.value.trim() : "";
+          return cv ? cv : undefined;
+        }
+        return v;
+      }
+
+      function wireCustom(selectId, customId) {
+        const sel = $(selectId);
+        const custom = $(customId);
+        if (!sel || !custom) return;
+        const update = () => {
+          custom.style.display = sel.value === "custom" ? "block" : "none";
+        };
+        sel.addEventListener("change", update);
+        update();
+      }
+
+      async function loadPrompts() {
+        const data = await api("/api/prompts", { method: "GET" });
+        const select = $("promptName");
+        select.innerHTML = "";
+        for (const p of data.prompts || []) {
+          const opt = document.createElement("option");
+          opt.value = p.name;
+          opt.textContent = `${p.title || p.name}`;
+          select.appendChild(opt);
+        }
+      }
+
+      async function loadTools() {
+        const data = await api("/api/tools", { method: "GET" });
+        const select = $("toolName");
+        select.innerHTML = "";
+        for (const t of data.tools || []) {
+          const opt = document.createElement("option");
+          opt.value = t.name;
+          opt.textContent = `${t.name}`;
+          select.appendChild(opt);
+        }
+      }
+
+      async function loadDocs() {
+        const data = await api("/api/resources", { method: "GET" });
+        const select = $("docUri");
+        select.innerHTML = "";
+        for (const r of data.resources || []) {
+          const opt = document.createElement("option");
+          opt.value = r.uri;
+          opt.textContent = `${r.name || r.uri}`;
+          select.appendChild(opt);
+        }
+      }
+
+      $("btnGetPrompt").addEventListener("click", async () => {
+        $("status").textContent = "Loading...";
+        try {
+          const name = $("promptName").value;
+          const body = {
+            name,
+            arguments: {
+              story: $("story").value,
+              mode: $("mode").value || undefined,
+              duration_seconds: pickValue("duration", "durationCustom"),
+              resolution: pickValue("resolution", "resolutionCustom"),
+              aspect_ratio: pickValue("aspect", "aspectCustom"),
+              style: $("style").value || undefined,
+              camera: $("camera").value || undefined,
+              lighting: $("lighting").value || undefined,
+              action_beats: $("actionBeats").value || undefined,
+              quality: $("quality").value || undefined,
+              audio: $("audio").value || undefined,
+            },
+          };
+
+          const data = await api("/api/prompts/get", { method: "POST", body: JSON.stringify(body) });
+          const msg = (data.messages && data.messages[0] && data.messages[0].content) || null;
+          const text = msg && msg.type === "text" ? msg.text : JSON.stringify(data, null, 2);
+          setOutput(text);
+          $("status").textContent = "Done.";
+        } catch (e) {
+          $("status").textContent = "Error.";
+          setOutput(e && e.message ? e.message : String(e), true);
+        }
+      });
+
+      $("btnGenerate").addEventListener("click", async () => {
+        $("status").textContent = "Generating...";
+        try {
+          const provider = $("provider").value || "none";
+          const payload = {
+            provider,
+            story: $("story").value,
+            mode: $("mode").value || undefined,
+            duration_seconds: pickValue("duration", "durationCustom"),
+            resolution: pickValue("resolution", "resolutionCustom"),
+            aspect_ratio: pickValue("aspect", "aspectCustom"),
+            style: $("style").value || undefined,
+            camera: $("camera").value || undefined,
+            lighting: $("lighting").value || undefined,
+            action_beats: $("actionBeats").value || undefined,
+            quality: $("quality").value || undefined,
+            audio: $("audio").value || undefined,
+          };
+
+          if (provider === "command") {
+            payload.command = getCommandValue();
+            payload.args = getCommandArgs();
+          }
+          if (provider === "ollama") {
+            payload.base_url = $("ollamaBaseUrl").value || undefined;
+            payload.model = $("ollamaModel").value || undefined;
+          }
+          if (provider === "openai_compatible") {
+            payload.base_url = $("openaiBaseUrl").value || undefined;
+            payload.model = $("openaiModel").value || undefined;
+            payload.api_key = $("openaiApiKey").value || undefined;
+          }
+
+          saveSettings(captureSettings());
+
+          const data = await api("/api/generate", { method: "POST", body: JSON.stringify(payload) });
+          setOutput(data.text || JSON.stringify(data, null, 2));
+          $("status").textContent = "Done.";
+        } catch (e) {
+          $("status").textContent = "Error.";
+          setOutput(e && e.message ? e.message : String(e), true);
+        }
+      });
+
+      $("btnLoadDocs").addEventListener("click", async () => {
+        try {
+          await loadDocs();
+          setOutput("Loaded documents.");
+        } catch (e) {
+          setOutput(e && e.message ? e.message : String(e), true);
+        }
+      });
+
+      $("btnReadDoc").addEventListener("click", async () => {
+        try {
+          const uri = $("docUri").value;
+          const data = await api(`/api/resources/read?uri=${encodeURIComponent(uri)}`, { method: "GET" });
+          const content = data.contents && data.contents[0] ? data.contents[0] : null;
+          const text = content && content.text ? String(content.text) : JSON.stringify(data, null, 2);
+          setOutput(text.slice(0, 20000) + (text.length > 20000 ? "\n\n...(truncated)..." : ""));
+        } catch (e) {
+          setOutput(e && e.message ? e.message : String(e), true);
+        }
+      });
+
+      $("btnLoadTools").addEventListener("click", async () => {
+        try {
+          await loadTools();
+          setOutput("Loaded tools.");
+        } catch (e) {
+          setOutput(e && e.message ? e.message : String(e), true);
+        }
+      });
+
+      $("btnCallTool").addEventListener("click", async () => {
+        try {
+          const name = $("toolName").value;
+          const raw = $("toolArgs").value.trim();
+          let args = {};
+          if (raw) args = JSON.parse(raw);
+          const data = await api("/api/tools/call", {
+            method: "POST",
+            body: JSON.stringify({ name, arguments: args }),
+          });
+          setOutput(JSON.stringify(data, null, 2));
+        } catch (e) {
+          setOutput(e && e.message ? e.message : String(e), true);
+        }
+      });
+
+      $("btnConnect").addEventListener("click", async () => {
+        try {
+          const btn = $("btnConnect");
+          btn.disabled = true;
+          btn.textContent = "Checking...";
+          setLlmStatus("Checking LLM...");
+          const config = collectLlmConfig();
+          if (config.provider === "none") {
+            setLlmStatus("Select an LLM provider first.", true);
+            return;
+          }
+          await api("/api/chat", {
+            method: "POST",
+            body: JSON.stringify({ prompt: "Reply with OK.", ...config }),
+          });
+          setLlmStatus("Connected.");
+        } catch (e) {
+          setLlmStatus(e && e.message ? e.message : "Not connected.", true);
+        } finally {
+          const btn = $("btnConnect");
+          btn.disabled = false;
+          btn.textContent = "Connect";
+        }
+      });
+
+      $("btnChatSend").addEventListener("click", async () => {
+        try {
+          const prompt = $("chatPrompt").value.trim();
+          if (!prompt) {
+            setOutput("Enter a message first.", true);
+            return;
+          }
+          setOutput("Sending...");
+          const data = await api("/api/chat", {
+            method: "POST",
+            body: JSON.stringify({ prompt, ...collectLlmConfig() }),
+          });
+          setOutput(data && data.text ? data.text : "(empty response)");
+        } catch (e) {
+          setOutput(e && e.message ? e.message : String(e), true);
+        }
+      });
+
+      (async () => {
+        try {
+          await api("/api/health", { method: "GET" });
+          await loadPrompts();
+          wireCustom("duration", "durationCustom");
+          wireCustom("resolution", "resolutionCustom");
+          wireCustom("aspect", "aspectCustom");
+
+          const providerEl = $("provider");
+          const cmdEl = $("providerCommand");
+          const cmdPresetEl = $("commandPreset");
+          const cmdCustomEl = $("commandCustom");
+          const ollamaEl = $("providerOllama");
+          const openaiEl = $("providerOpenAi");
+          const updateCommandPreset = () => {
+            if (!cmdPresetEl || !cmdCustomEl) return;
+            cmdCustomEl.style.display = cmdPresetEl.value === "custom" ? "block" : "none";
+          };
+          const updateProvider = () => {
+            cmdEl.style.display = providerEl.value === "command" ? "block" : "none";
+            ollamaEl.style.display = providerEl.value === "ollama" ? "block" : "none";
+            openaiEl.style.display = providerEl.value === "openai_compatible" ? "block" : "none";
+          };
+          providerEl.addEventListener("change", updateProvider);
+          if (cmdPresetEl) {
+            cmdPresetEl.addEventListener("change", updateCommandPreset);
+          }
+          applySettings(loadSettings());
+          updateProvider();
+          updateCommandPreset();
+          setLlmStatus("Server connected. Click Connect to test LLM.");
+
+          setOutput("Connected. Choose a prompt and click “Get prompt template”.");
+        } catch (e) {
+          setLlmStatus("Not connected.", true);
+          setOutput(
+            "GUI server is up, but MCP bridge is not ready. Did you run `npm run build`?\n\n" +
+              (e && e.message ? e.message : String(e)),
+            true
+          );
+        }
+      })();
+    </script>
+  </body>
+</html>

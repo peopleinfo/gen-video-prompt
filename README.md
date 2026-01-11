@@ -21,6 +21,77 @@ npm run start
 
 This starts the MCP server over stdio.
 
+## GUI (local)
+
+A small local web UI that spawns the MCP server and lets you call `prompts/get`, browse resources, and run tools.
+
+```bash
+npm run gui
+```
+
+Then open `http://127.0.0.1:3333`.
+
+Notes:
+
+- This UI only returns MCP prompt templates and document content; it does not run an LLM.
+- The GUI uses `node dist/server.js` under the hood, so it requires a successful `npm run build`.
+
+## Filling `(unspecified)` with an LLM (optional)
+
+The GUI can fill missing fields by using either:
+
+- A local command (Codex CLI, etc.), or
+- An HTTP LLM backend (Ollama HTTP, or any OpenAI-compatible API).
+
+Start the GUI with command execution enabled:
+
+```bash
+ENABLE_COMMAND_LLM=1 npm run gui
+```
+
+Then in the GUI choose `Fill missing fields -> Local command` and set:
+
+- `Command`: a program that reads the prompt from stdin and prints the answer to stdout.
+- `Args`: any arguments your program needs.
+
+Example (Codex CLI): set `Command` to `codex` and choose args that make it read stdin and print the response (depends on your Codex CLI usage).
+
+Enable HTTP LLM backends:
+
+```bash
+ENABLE_HTTP_LLM=1 npm run gui
+```
+
+Example (Ollama HTTP):
+
+- Provider: `Ollama (HTTP)`
+- Base URL: `http://127.0.0.1:11434`
+- Model: `llama3`
+
+Example (OpenAI-compatible):
+
+- Provider: `OpenAI-compatible API`
+- Base URL: `https://api.openai.com`
+- Model: your model name
+- API key: your key (stored in browser localStorage)
+
+Enable both:
+
+```bash
+npm run gui:all-llm
+```
+
+Example (Ollama CLI):
+
+- Command: `ollama`
+- Args: `run llama3`
+
+## GUI smoke test
+
+```bash
+npm run test:gui
+```
+
 ## Register with Codex MCP
 
 Add a server entry to your Codex MCP config. Example:
@@ -57,7 +128,13 @@ Prompts:
 
 - `structured_video_prompt`: generate a structured Sora 2 video prompt with sections for style, camera, lighting, action beats, quality, and audio.
   - Required args: `story`
-  - Optional args: `duration_seconds`, `resolution`, `aspect_ratio`, `style`, `camera`, `lighting`, `quality`, `action_beats`, `audio`
+  - Optional args: `mode` (`auto`, `story`, `meme`), `duration_seconds`, `resolution`, `aspect_ratio`, `style`, `camera`, `lighting`, `quality`, `action_beats`, `audio`
+- `video_category_suggestion`: suggest a popular video category phrase (e.g. "popular funny videos in USA").
+  - Required args: `story`
+
+Notes:
+
+- If `structured_video_prompt.story` looks like a request for video categories, it automatically switches to category suggestion mode.
 
 ## Example usage
 

@@ -15,6 +15,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 type DocType = "markdown" | "pdf" | "text";
+type PromptMode = "auto" | "story" | "meme";
 
 type DocInfo = {
   id: string;
@@ -35,6 +36,8 @@ Core approach:
 - Follow the Five Pillars: subject and character, action and motion, environment and setting, cinematic framing, aesthetic and style.
 - Treat Sora as a world simulator: describe physical interactions, materials, light, and motion so the scene is internally consistent.
 - Use concrete verbs and visible outcomes. Avoid vague adjectives without visual anchors.
+- Default to storytelling: include a clear narrative arc (hook → escalation → payoff) even for short clips, unless the user explicitly asks for something else.
+- If the user requests "meme", "funny", "comedy", or "viral", prioritize a fast hook (first 1–2s), a surprising visual twist, and a highly memeable moment that could be captioned.
 
 Output format when drafting a prompt:
 1) Prompt: one cohesive paragraph describing the scene.
@@ -54,6 +57,9 @@ Notes:
 const PROMPT_TEMPLATE = `
 Create a Sora 2 video prompt from the brief below. Follow the Five Pillars and world-simulator approach.
 Use concrete verbs and visible outcomes. If details are missing, add plausible specifics that support the story.
+
+Storytelling / virality guidance:
+{{storytelling_guidance}}
 
 Brief:
 {{story}}
@@ -83,11 +89,36 @@ const PROMPT_NAME = "structured_video_prompt";
 const PROMPT_TITLE = "Structured Sora 2 video prompt";
 const PROMPT_DESCRIPTION =
   "Generate a cinematic Sora 2 prompt with structured sections (style, camera, lighting, action beats, quality).";
+
+const CATEGORY_PROMPT_NAME = "video_category_suggestion";
+const CATEGORY_PROMPT_TITLE = "Video category suggestion";
+const CATEGORY_PROMPT_DESCRIPTION =
+  "Suggest a popular video category phrased like: 'popular funny videos in USA'.";
+const CATEGORY_PROMPT_TEMPLATE = `
+The user is asking for video categories (not a Sora prompt).
+
+Task:
+- Suggest 1 concise category phrase (NOT a list).
+- Use the format: "popular <category> videos in <region>".
+- If region is missing, default to USA.
+- If the user's preference is unclear, default to "funny".
+
+User request:
+{{story}}
+
+Return only the phrase.
+`.trim();
+
 const PROMPT_ARGUMENTS = [
   {
     name: "story",
     description: "Short brief or story for the clip.",
     required: true,
+  },
+  {
+    name: "mode",
+    description:
+      "Prompt mode override: auto (default), story (storytelling), meme (funny/viral/meme).",
   },
   {
     name: "duration_seconds",
@@ -124,6 +155,14 @@ const PROMPT_ARGUMENTS = [
   {
     name: "audio",
     description: "Diegetic sound cues or audio notes.",
+  },
+];
+
+const CATEGORY_PROMPT_ARGUMENTS = [
+  {
+    name: "story",
+    description: "User request, e.g. 'give me categories of videos a user likes'.",
+    required: true,
   },
 ];
 
@@ -169,6 +208,46 @@ function normalizeSnippet(input: string, maxLen: number): string {
   return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 1)}…` : cleaned;
 }
 
+function looksLikeCategoryRequest(text: string): boolean {
+  const cleaned = text.toLowerCase();
+  return /\b(category|categories|genre|type of (video|videos)|what (kind|type) of (video|videos))\b/.test(
+    cleaned
+  );
+}
+
+function looksLikeMemeOrFunnyRequest(text: string): boolean {
+  const cleaned = text.toLowerCase();
+  return /\b(meme|memes|funny|comedy|comedic|humor|humour|viral)\b/.test(cleaned);
+}
+
+function getPromptMode(story: string, rawMode?: string): PromptMode {
+  const cleaned = (rawMode ?? "").trim().toLowerCase();
+  if (cleaned === "story" || cleaned === "storytelling") return "story";
+  if (cleaned === "meme" || cleaned === "funny" || cleaned === "viral") return "meme";
+  if (cleaned === "auto" || cleaned === "") return "auto";
+  return looksLikeMemeOrFunnyRequest(story) ? "meme" : "auto";
+}
+
+function getStorytellingGuidance(story: string, mode: PromptMode): string {
+  const effectiveMode = mode === "auto" ? (looksLikeMemeOrFunnyRequest(story) ? "meme" : "story") : mode;
+  if (effectiveMode === "meme") {
+    return [
+      "- Make it meme-first: immediate hook in the first 1–2 seconds.",
+      "- Build a simple setup → twist → punchline/payoff that reads without dialogue.",
+      "- Include 1 clear 'freeze-frame' meme moment (strong silhouette/pose/reaction) suitable for captions.",
+      "- Keep beats readable: exaggerate reactions, visual contrast, and timing.",
+      "- End on a loopable final beat (clean cut back to the opening vibe).",
+    ].join("\n");
+  }
+
+  return [
+    "- Default to storytelling: hook → escalation → payoff within the duration.",
+    "- Establish stakes and intent quickly through visible actions and consequences.",
+    "- Give the scene a clear turning point (reveal, discovery, change in environment).",
+    "- End with a satisfying resolution or cliffhanger that invites replay.",
+  ].join("\n");
+}
+
 async function listDocPaths(): Promise<string[]> {
   return fg(["**/*.md", "**/*.pdf", "**/*.txt"], {
     cwd: DATA_DIR,
@@ -180,10 +259,10 @@ async function listDocPaths(): Promise<string[]> {
 async function getMarkdownTitleAndInfo(absPath: string): Promise<{ title: string; info: string }> {
   const content = await fs.readFile(absPath, "utf8");
   const lines = content.split(/\r?\n/);
-  const heading = lines.find((line) => line.trim().startsWith("#"));
+  const heading = lines.find((line: string) => line.trim().startsWith("#"));
   const title = heading ? heading.replace(/^#+\s*/, "").trim() : path.basename(absPath, ".md");
   const snippetSource = lines
-    .filter((line) => line.trim() && !line.trim().startsWith("#"))
+    .filter((line: string) => line.trim() && !line.trim().startsWith("#"))
     .join(" ");
   const info = normalizeSnippet(snippetSource || content, 240) || "Markdown document.";
   return { title, info };
@@ -306,13 +385,19 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
         description: PROMPT_DESCRIPTION,
         arguments: PROMPT_ARGUMENTS,
       },
+      {
+        name: CATEGORY_PROMPT_NAME,
+        title: CATEGORY_PROMPT_TITLE,
+        description: CATEGORY_PROMPT_DESCRIPTION,
+        arguments: CATEGORY_PROMPT_ARGUMENTS,
+      },
     ],
   };
 });
 
 server.setRequestHandler(GetPromptRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  if (name !== PROMPT_NAME) {
+  if (name !== PROMPT_NAME && name !== CATEGORY_PROMPT_NAME) {
     throw new Error(`Unknown prompt: ${name}`);
   }
 
@@ -321,21 +406,28 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     throw new Error("Missing prompt argument: story");
   }
 
-  const promptText = renderPromptTemplate(PROMPT_TEMPLATE, {
-    story,
-    duration_seconds: getPromptArg(args, "duration_seconds"),
-    resolution: getPromptArg(args, "resolution"),
-    aspect_ratio: getPromptArg(args, "aspect_ratio"),
-    style: getPromptArg(args, "style"),
-    camera: getPromptArg(args, "camera"),
-    lighting: getPromptArg(args, "lighting"),
-    quality: getPromptArg(args, "quality"),
-    action_beats: getPromptArg(args, "action_beats"),
-    audio: getPromptArg(args, "audio"),
-  });
+  const mode = getPromptMode(story, getPromptArg(args, "mode"));
+  const shouldSuggestCategory =
+    name === CATEGORY_PROMPT_NAME || (name === PROMPT_NAME && looksLikeCategoryRequest(story));
+
+  const promptText = shouldSuggestCategory
+    ? renderPromptTemplate(CATEGORY_PROMPT_TEMPLATE, { story })
+    : renderPromptTemplate(PROMPT_TEMPLATE, {
+        story,
+        storytelling_guidance: getStorytellingGuidance(story, mode),
+        duration_seconds: getPromptArg(args, "duration_seconds"),
+        resolution: getPromptArg(args, "resolution") ?? "1920x1080",
+        aspect_ratio: getPromptArg(args, "aspect_ratio"),
+        style: getPromptArg(args, "style"),
+        camera: getPromptArg(args, "camera"),
+        lighting: getPromptArg(args, "lighting"),
+        quality: getPromptArg(args, "quality"),
+        action_beats: getPromptArg(args, "action_beats"),
+        audio: getPromptArg(args, "audio"),
+      });
 
   return {
-    description: PROMPT_DESCRIPTION,
+    description: shouldSuggestCategory ? CATEGORY_PROMPT_DESCRIPTION : PROMPT_DESCRIPTION,
     messages: [
       {
         role: "user",

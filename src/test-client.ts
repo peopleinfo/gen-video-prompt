@@ -1,152 +1,113 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-type DocSummary = {
-  id: string;
-  title: string;
-  type: string;
-  info: string;
+type CliArgs = {
+  prompt: string;
+  promptName: string;
+  mode?: string;
+  durationSeconds?: string;
+  resolution?: string;
+  aspectRatio?: string;
+  style?: string;
+  camera?: string;
+  lighting?: string;
+  quality?: string;
+  actionBeats?: string;
+  audio?: string;
 };
 
-type DocPayload = {
-  id: string;
-  title: string;
-  type: string;
-  content: string;
-};
-
-function safeJsonParse<T>(text: string, fallback: T): T {
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return fallback;
-  }
+function usage(): string {
+  return [
+    "Usage:",
+    "  npx tsx src/test-client.ts --prompt \"...\" [--name structured_video_prompt]",
+    "",
+    "Optional args:",
+    "  --mode <auto|story|meme>",
+    "  --duration <seconds>",
+    "  --resolution <WxH>",
+    "  --aspect-ratio <text>",
+    "  --style <text>",
+    "  --camera <text>",
+    "  --lighting <text>",
+    "  --quality <text>",
+    "  --action-beats <text>",
+    "  --audio <text>",
+  ].join("\n");
 }
 
-function pickDoc(docs: DocSummary[], query: string): DocSummary | null {
-  if (!docs.length) {
-    return null;
+function parseArgs(argv: string[]): CliArgs {
+  const get = (flag: string): string | undefined => {
+    const idx = argv.indexOf(flag);
+    if (idx === -1) return undefined;
+    const value = argv[idx + 1];
+    if (!value || value.startsWith("--")) return undefined;
+    return value;
+  };
+
+  const prompt = get("--prompt") ?? "";
+  if (!prompt.trim()) {
+    throw new Error(`Missing required --prompt.\n\n${usage()}`);
   }
-  if (!query) {
-    return docs[0];
-  }
-  const needle = query.toLowerCase();
-  return (
-    docs.find((doc) =>
-      `${doc.title} ${doc.info} ${doc.id}`.toLowerCase().includes(needle)
-    ) ?? docs[0]
-  );
+
+  return {
+    prompt,
+    promptName: get("--name") ?? "structured_video_prompt",
+    mode: get("--mode"),
+    durationSeconds: get("--duration"),
+    resolution: get("--resolution"),
+    aspectRatio: get("--aspect-ratio"),
+    style: get("--style"),
+    camera: get("--camera"),
+    lighting: get("--lighting"),
+    quality: get("--quality"),
+    actionBeats: get("--action-beats"),
+    audio: get("--audio"),
+  };
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const promptIndex = args.indexOf("--prompt");
-  const promptMode = promptIndex !== -1;
-  const query = promptMode
-    ? ""
-    : args.join(" ").trim() || "nature landscape";
-  const promptStory = promptMode
-    ? args.slice(promptIndex + 1).join(" ").trim()
-    : "";
+  const args = parseArgs(process.argv.slice(2));
 
-  const client = new Client({ name: "local-test-client", version: "0.1.0" });
   const transport = new StdioClientTransport({
-    command: "npx",
-    args: ["tsx", "src/server.ts"],
+    command: "node",
+    args: ["--loader", "tsx", "src/server.ts"],
     cwd: process.cwd(),
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
-  transport.stderr?.on("data", (chunk) => process.stderr.write(chunk));
+  const client = new Client({ name: "gen-video-prompt-test-client", version: "0.0.0" });
   await client.connect(transport);
 
-  if (promptMode) {
-    const story =
-      promptStory ||
-      "A sad 15-second story of a stray cat waiting at a bus stop in the rain.";
-    const promptsResult = await client.listPrompts();
-    const promptName =
-      promptsResult.prompts.find((prompt) => prompt.name === "structured_video_prompt")
-        ?.name ?? promptsResult.prompts[0]?.name;
-
-    if (!promptName) {
-      console.log("No prompts available.");
-      await client.close();
-      return;
+  const promptArgs: Record<string, string> = { story: args.prompt };
+  const addIf = (key: string, value: string | undefined): void => {
+    if (value && value.trim()) {
+      promptArgs[key] = value.trim();
     }
+  };
+  addIf("mode", args.mode);
+  addIf("duration_seconds", args.durationSeconds);
+  addIf("resolution", args.resolution);
+  addIf("aspect_ratio", args.aspectRatio);
+  addIf("style", args.style);
+  addIf("camera", args.camera);
+  addIf("lighting", args.lighting);
+  addIf("quality", args.quality);
+  addIf("action_beats", args.actionBeats);
+  addIf("audio", args.audio);
 
-    const promptResult = await client.getPrompt({
-      name: promptName,
-      arguments: {
-        story,
-        duration_seconds: "15",
-        resolution: "1280x720",
-        aspect_ratio: "16:9",
-        style: "cinematic realism, muted palette",
-        camera: "35mm lens, slow push-in, gentle handheld",
-        lighting: "streetlight practicals, soft rain haze",
-        quality: "4K, 24fps, clean compression",
-        action_beats: "0-5s wait + buses pass, 5-10s curl up, 10-15s ribbon slips",
-        audio: "light rain, distant traffic, bus hiss",
-      },
-    });
-
-    const promptMessage = promptResult.messages[0]?.content;
-    if (promptMessage?.type === "text") {
-      console.log(`Prompt name: ${promptName}`);
-      console.log(promptMessage.text);
-    } else {
-      console.log(`Prompt name: ${promptName}`);
-      console.log("Prompt returned non-text content.");
-    }
-
-    await client.close();
-    return;
-  }
-
-  await client.listTools();
-  const docsResult = await client.callTool({
-    name: "list_documents",
-    arguments: {},
+  const result = await client.getPrompt({
+    name: args.promptName,
+    arguments: promptArgs,
   });
-
-  const docsText = docsResult.content?.[0]?.text ?? "[]";
-  const docs = safeJsonParse<DocSummary[]>(docsText, []);
-  const doc = pickDoc(docs, query);
-
-  if (!doc) {
-    console.log("No documents found in data/.");
-    await client.close();
-    return;
-  }
-
-  const docResult = await client.callTool({
-    name: "get_document",
-    arguments: { id: doc.id },
-  });
-  const docText = docResult.content?.[0]?.text ?? "{}";
-  const payload = safeJsonParse<DocPayload>(docText, {
-    id: doc.id,
-    title: doc.title,
-    type: doc.type,
-    content: "",
-  });
-
-  const snippet = payload.content
-    .split(/\r?\n/)
-    .filter((line) => line.trim())
-    .slice(0, 12)
-    .join("\n");
-
-  console.log(`Query: ${query}`);
-  console.log(`Picked: ${payload.title} (${payload.id})`);
-  console.log("Sample content:");
-  console.log(snippet || "(empty)");
 
   await client.close();
+
+  const first = result.messages?.[0];
+  const text = first?.content?.type === "text" ? first.content.text : "";
+  process.stdout.write(text ? `${text.trim()}\n` : "(no prompt text returned)\n");
 }
 
 main().catch((error) => {
-  console.error("Test client error:", error);
+  console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 });
