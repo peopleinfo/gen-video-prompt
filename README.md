@@ -191,3 +191,7 @@ node scripts/test-docs.mjs "nature landscape"
 ```
 
 This reads the local docs and prints a short excerpt from a matching file.
+
+## Useful links
+
+- [Copy Prompts](https://docsbot.ai/prompts/creative)
