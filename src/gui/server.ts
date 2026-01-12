@@ -224,7 +224,11 @@ async function runCommandLlm(params: {
       env: process.env,
     });
 
-    const killTimer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    let killReason = "";
+    const killTimer = setTimeout(() => {
+      killReason = `Timeout after ${timeoutMs}ms`;
+      child.kill("SIGKILL");
+    }, timeoutMs);
 
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
@@ -233,6 +237,7 @@ async function runCommandLlm(params: {
       if (target === "stdout") stdout = Buffer.concat([stdout, chunk]);
       else stderr = Buffer.concat([stderr, chunk]);
       if (stdout.length > maxOutputBytes || stderr.length > maxOutputBytes) {
+        killReason = `Output exceeded ${maxOutputBytes} bytes`;
         child.kill("SIGKILL");
       }
     };
@@ -245,12 +250,17 @@ async function runCommandLlm(params: {
       reject(err);
     });
 
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       clearTimeout(killTimer);
       if (code !== 0) {
+        const signalInfo = signal ? `, signal ${signal}` : "";
+        const reason = killReason ? `\n\nreason:\n${killReason}` : "";
+        const stderrText = stderr.toString("utf8").trim();
+        const stdoutText = stdout.toString("utf8").trim();
+        const stdoutInfo = stdoutText ? `\n\nstdout:\n${stdoutText}` : "";
         reject(
           new Error(
-            `LLM command failed (exit ${code}).\n\nstderr:\n${stderr.toString("utf8").trim()}`
+            `LLM command failed (exit ${code}${signalInfo}).\n\nstderr:\n${stderrText}${stdoutInfo}${reason}`
           )
         );
         return;
@@ -547,7 +557,12 @@ async function main(): Promise<void> {
                   ? buildGeminiArgs(geminiModel)
                   : [];
 
-            const out = await runCommandLlm({ command, args: effectiveArgs, input: instruction });
+            const out = await runCommandLlm({
+              command,
+              args: effectiveArgs,
+              input: instruction,
+              timeoutMs: 120_000,
+            });
             json(res, 200, { ok: true, mode: "generated", text: out });
             return;
           } finally {
