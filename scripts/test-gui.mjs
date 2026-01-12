@@ -105,6 +105,56 @@ async function main() {
     assert(text.includes("meme-first"), "Expected meme-first guidance for meme/funny/viral request");
     assert(text.includes("Resolution (API param): 1920x1080"), "Expected default resolution 1920x1080");
 
+    const documentaryTemplate = await httpJson({
+      port,
+      method: "POST",
+      path: "/api/generate",
+      body: JSON.stringify({
+        provider: "none",
+        mode: "documentary",
+        story: "A short documentary about coral reefs with narration and b-roll.",
+        duration_seconds: "8",
+      }),
+    });
+    assert(documentaryTemplate.ok === true, "Expected /api/generate ok=true for documentary mode");
+    assert(
+      typeof documentaryTemplate.text === "string" && documentaryTemplate.text.includes("documentary structure"),
+      "Expected documentary guidance in template"
+    );
+
+    const historyTemplate = await httpJson({
+      port,
+      method: "POST",
+      path: "/api/generate",
+      body: JSON.stringify({
+        provider: "none",
+        mode: "history",
+        story: "A historical reenactment set in ancient Rome; period-accurate wardrobe and props.",
+        duration_seconds: "8",
+      }),
+    });
+    assert(historyTemplate.ok === true, "Expected /api/generate ok=true for history mode");
+    assert(
+      typeof historyTemplate.text === "string" && historyTemplate.text.includes("period accuracy"),
+      "Expected history guidance in template"
+    );
+
+    const invalidMode = await httpJson({
+      port,
+      method: "POST",
+      path: "/api/generate",
+      body: JSON.stringify({
+        provider: "none",
+        mode: "not-a-real-mode",
+        story: "test",
+        duration_seconds: "8",
+      }),
+    }).then(
+      () => ({ ok: true }),
+      (err) => ({ ok: false, err })
+    );
+    assert(invalidMode.ok === false, "Expected /api/generate invalid mode to fail");
+
     const generateBlocked = await httpJson({
       port,
       method: "POST",

@@ -15,7 +15,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 type DocType = "markdown" | "pdf" | "text";
-type PromptMode = "auto" | "story" | "meme";
+type PromptMode = "auto" | "story" | "meme" | "documentary" | "history";
 
 type DocInfo = {
   id: string;
@@ -130,7 +130,7 @@ const PROMPT_ARGUMENTS = [
   {
     name: "mode",
     description:
-      "Prompt mode override: auto (default), story (storytelling), meme (funny/viral/meme).",
+      "Prompt mode override: auto (default), story (storytelling), meme (funny/viral/meme), documentary (nonfiction), history (period-accurate historical).",
   },
   {
     name: "duration_seconds",
@@ -239,16 +239,44 @@ function looksLikeMemeOrFunnyRequest(text: string): boolean {
   return /\b(meme|memes|funny|comedy|comedic|humor|humour|viral)\b/.test(cleaned);
 }
 
+function looksLikeDocumentaryRequest(text: string): boolean {
+  const cleaned = text.toLowerCase();
+  return /\b(documentary|docu|nonfiction|interview|talking head|b-?roll|voice\s?over|narration|archival|verit[ée])\b/.test(
+    cleaned
+  );
+}
+
+function looksLikeHistoryRequest(text: string): boolean {
+  const cleaned = text.toLowerCase();
+  return /\b(history|historical|period piece|antiquity|ancient|medieval|renaissance|victorian|ww1|ww2|world war|roman|egypt|ottoman|dynasty|century)\b/.test(
+    cleaned
+  );
+}
+
 function getPromptMode(story: string, rawMode?: string): PromptMode {
   const cleaned = (rawMode ?? "").trim().toLowerCase();
   if (cleaned === "story" || cleaned === "storytelling") return "story";
   if (cleaned === "meme" || cleaned === "funny" || cleaned === "viral") return "meme";
+  if (cleaned === "documentary" || cleaned === "doc" || cleaned === "docu") return "documentary";
+  if (cleaned === "history" || cleaned === "historical") return "history";
   if (cleaned === "auto" || cleaned === "") return "auto";
-  return looksLikeMemeOrFunnyRequest(story) ? "meme" : "auto";
+  if (looksLikeMemeOrFunnyRequest(story)) return "meme";
+  if (looksLikeDocumentaryRequest(story)) return "documentary";
+  if (looksLikeHistoryRequest(story)) return "history";
+  return "auto";
 }
 
 function getStorytellingGuidance(story: string, mode: PromptMode): string {
-  const effectiveMode = mode === "auto" ? (looksLikeMemeOrFunnyRequest(story) ? "meme" : "story") : mode;
+  const effectiveMode =
+    mode === "auto"
+      ? looksLikeMemeOrFunnyRequest(story)
+        ? "meme"
+        : looksLikeDocumentaryRequest(story)
+          ? "documentary"
+          : looksLikeHistoryRequest(story)
+            ? "history"
+            : "story"
+      : mode;
   if (effectiveMode === "meme") {
     return [
       "- Make it meme-first: immediate hook in the first 1–2 seconds.",
@@ -256,6 +284,26 @@ function getStorytellingGuidance(story: string, mode: PromptMode): string {
       "- Include 1 clear 'freeze-frame' meme moment (strong silhouette/pose/reaction) suitable for captions.",
       "- Keep beats readable: exaggerate reactions, visual contrast, and timing.",
       "- End on a loopable final beat (clean cut back to the opening vibe).",
+    ].join("\n");
+  }
+
+  if (effectiveMode === "documentary") {
+    return [
+      "- Use a documentary structure: hook → context → evidence/sequence → takeaway.",
+      "- Favor observable details and real-world constraints; avoid magical coincidences unless requested.",
+      "- Mix visual language: establishing shots, b-roll inserts, and 1–2 interview/talking-head moments.",
+      "- Add documentary devices where helpful: on-screen lower-thirds, dates/locations, archival-style inserts.",
+      "- Keep beats information-dense and visually explanatory (show causes and effects).",
+    ].join("\n");
+  }
+
+  if (effectiveMode === "history") {
+    return [
+      "- Anchor the scene with time/place (year, region) and make period accuracy visible (wardrobe, props, architecture).",
+      "- Avoid anachronisms; prefer era-appropriate materials, signage, and technology.",
+      "- Tell a clear historical arc: setup → conflict/change → consequence, with a concrete moment of turning.",
+      "- Use cinematic history language: maps/diagrams, archival documents, or tableau-style reenactment beats if fitting.",
+      "- End with a strong historical image or implication that invites reflection/replay.",
     ].join("\n");
   }
 

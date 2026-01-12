@@ -86,6 +86,17 @@ function asObject(value: unknown): JsonRecord {
   return value as JsonRecord;
 }
 
+function normalizePromptMode(raw: string): string | undefined {
+  const cleaned = raw.trim().toLowerCase();
+  if (!cleaned) return undefined;
+  if (cleaned === "auto") return "auto";
+  if (cleaned === "story" || cleaned === "storytelling") return "story";
+  if (cleaned === "meme" || cleaned === "funny" || cleaned === "viral") return "meme";
+  if (cleaned === "documentary" || cleaned === "doc" || cleaned === "docu") return "documentary";
+  if (cleaned === "history" || cleaned === "historical") return "history";
+  return undefined;
+}
+
 function safePathJoin(baseDir: string, urlPathname: string): string | null {
   const decoded = decodeURIComponent(urlPathname);
   const rel = decoded.replace(/^\/+/, "");
@@ -379,7 +390,15 @@ async function main(): Promise<void> {
         }
 
         const provider = asString(body.provider) ?? "none";
-        const mode = asString(body.mode);
+        const rawMode = asString(body.mode);
+        const mode = rawMode ? normalizePromptMode(rawMode) : undefined;
+        if (rawMode && !mode) {
+          json(res, 400, {
+            ok: false,
+            error: `Unknown mode: ${rawMode}. Supported: auto, story, meme, documentary, history.`,
+          });
+          return;
+        }
         const totalSeconds = Number(asString(body.duration_seconds));
         const partSeconds = Number(asString(body.part_length_seconds));
         if (
