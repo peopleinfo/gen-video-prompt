@@ -18,6 +18,7 @@
     "mcp:watch": "tsx watch src/server.ts",
     "test:gui": "npm run build && node scripts/test-gui.mjs",
     "test:gui:codex-image": "node scripts/test-gui-codex-image.mjs",
+    "test:gui:gemini-chat": "npm run build && node scripts/test-gui-gemini-chat.mjs",
     "dev": "tsx src/server.ts",
     "rename:data": "tsx src/rename-data.ts"
   },

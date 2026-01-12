@@ -214,6 +214,7 @@
             <label for="commandPreset">CLI</label>
             <select id="commandPreset">
               <option value="codex" selected>Codex CLI</option>
+              <option value="gemini">Gemini CLI</option>
               <option value="custom">Other CLI</option>
             </select>
 
@@ -243,6 +244,21 @@
                 <option value="resume_last">Resume last session</option>
               </select>
               <button id="btnCodexNewTopic" type="button" style="margin-top: 6px">New topic</button>
+            </div>
+
+            <div id="geminiModelRow" style="margin-top: 10px; display: none">
+              <label for="geminiModelPreset">Gemini model</label>
+              <select id="geminiModelPreset">
+                <option value="">Auto (best for task)</option>
+                <option value="gemini-2.5-pro">Pro (gemini-2.5-pro)</option>
+                <option value="gemini-2.5-flash">Flash (gemini-2.5-flash)</option>
+                <option value="gemini-2.5-flash-lite">Flash-Lite (gemini-2.5-flash-lite)</option>
+                <option value="custom">Custom...</option>
+              </select>
+              <div id="geminiModelCustom" style="display: none">
+                <label for="geminiModel">Custom model</label>
+                <input id="geminiModel" placeholder="e.g. gemini-2.5-pro" />
+              </div>
             </div>
 
             <div id="commandCustom" style="display: none">
@@ -992,6 +1008,7 @@
       function getCommandValue() {
         const preset = $("commandPreset");
         if (preset && preset.value === "codex") return "codex";
+        if (preset && preset.value === "gemini") return "gemini";
         return $("cmd").value || "";
       }
 
@@ -1002,6 +1019,17 @@
         if (!modelPreset) return "";
         if (modelPreset.value === "custom") {
           return ($("codexModel").value || "").trim();
+        }
+        return (modelPreset.value || "").trim();
+      }
+
+      function getGeminiModelValue() {
+        const preset = $("commandPreset");
+        if (!preset || preset.value !== "gemini") return "";
+        const modelPreset = $("geminiModelPreset");
+        if (!modelPreset) return "";
+        if (modelPreset.value === "custom") {
+          return ($("geminiModel").value || "").trim();
         }
         return (modelPreset.value || "").trim();
       }
@@ -1019,6 +1047,7 @@
           command: getCommandValue(),
           codex_model: getCodexModelValue(),
           codex_session: getCodexSessionMode(),
+          gemini_model: getGeminiModelValue(),
           ollama: {
             base_url: $("ollamaBaseUrl").value || "",
             model: $("ollamaModel").value || "",
@@ -1073,7 +1102,8 @@
         set("provider", settings.provider);
         set(
           "commandPreset",
-          settings.commandPreset || (settings.cmd ? (settings.cmd === "codex" ? "codex" : "custom") : "codex")
+          settings.commandPreset ||
+            (settings.cmd ? (settings.cmd === "codex" ? "codex" : settings.cmd === "gemini" ? "gemini" : "custom") : "codex")
         );
         const codexModel = typeof settings.codexModel === "string" ? settings.codexModel.trim() : "";
         const presetFromModel = codexModel
@@ -1084,6 +1114,14 @@
         set("codexModelPreset", settings.codexModelPreset || presetFromModel);
         set("codexModel", codexModel);
         set("codexSessionMode", settings.codexSessionMode || "new");
+        const geminiModel = typeof settings.geminiModel === "string" ? settings.geminiModel.trim() : "";
+        const geminiPresetFromModel = geminiModel
+          ? ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"].includes(geminiModel)
+            ? geminiModel
+            : "custom"
+          : "";
+        set("geminiModelPreset", settings.geminiModelPreset || geminiPresetFromModel);
+        set("geminiModel", geminiModel);
         set("cmd", settings.cmd);
         set("cmdArgs", "");
         set("ollamaBaseUrl", settings.ollamaBaseUrl);
@@ -1100,6 +1138,8 @@
           codexModelPreset: $("codexModelPreset").value || "",
           codexModel: $("codexModel").value || "",
           codexSessionMode: $("codexSessionMode").value || "new",
+          geminiModelPreset: $("geminiModelPreset").value || "",
+          geminiModel: $("geminiModel").value || "",
           cmd: $("cmd").value || "",
           cmdArgs: "",
           ollamaBaseUrl: $("ollamaBaseUrl").value || "",
@@ -1260,6 +1300,7 @@
             payload.command = getCommandValue();
             payload.codex_model = getCodexModelValue() || undefined;
             payload.codex_session = getCodexSessionMode() || undefined;
+            payload.gemini_model = getGeminiModelValue() || undefined;
             if (payload.command === "codex") {
               const images = await readImages("promptImages");
               if (images.length) {
@@ -1441,14 +1482,28 @@
           const codexModelCustomEl = $("codexModelCustom");
           const codexNewTopicEl = $("btnCodexNewTopic");
           const codexSessionModeEl = $("codexSessionMode");
+          const geminiModelRowEl = $("geminiModelRow");
+          const geminiModelPresetEl = $("geminiModelPreset");
+          const geminiModelCustomEl = $("geminiModelCustom");
           const ollamaEl = $("providerOllama");
           const openaiEl = $("providerOpenAi");
           const updateCommandPreset = () => {
-            if (!cmdPresetEl || !cmdCustomEl || !codexModelRowEl || !codexSessionRowEl) return;
+            if (!cmdPresetEl || !cmdCustomEl || !codexModelRowEl || !codexSessionRowEl || !geminiModelRowEl)
+              return;
             const isCustom = cmdPresetEl.value === "custom";
+            const isCodex = cmdPresetEl.value === "codex";
+            const isGemini = cmdPresetEl.value === "gemini";
             cmdCustomEl.style.display = isCustom ? "block" : "none";
-            codexModelRowEl.style.display = isCustom ? "none" : "block";
-            codexSessionRowEl.style.display = isCustom ? "none" : "block";
+            codexModelRowEl.style.display = isCodex ? "block" : "none";
+            codexSessionRowEl.style.display = isCodex ? "block" : "none";
+            geminiModelRowEl.style.display = isGemini ? "block" : "none";
+            if (isGemini) {
+              updateGeminiModelPreset();
+            }
+          };
+          const updateGeminiModelPreset = () => {
+            if (!geminiModelPresetEl || !geminiModelCustomEl) return;
+            geminiModelCustomEl.style.display = geminiModelPresetEl.value === "custom" ? "block" : "none";
           };
           const updateCodexModelPreset = () => {
             if (!codexModelPresetEl || !codexModelCustomEl) return;
@@ -1466,6 +1521,9 @@
           if (codexModelPresetEl) {
             codexModelPresetEl.addEventListener("change", updateCodexModelPreset);
           }
+          if (geminiModelPresetEl) {
+            geminiModelPresetEl.addEventListener("change", updateGeminiModelPreset);
+          }
           if (codexNewTopicEl && codexSessionModeEl) {
             codexNewTopicEl.addEventListener("click", () => {
               codexSessionModeEl.value = "new";
@@ -1476,6 +1534,7 @@
           updateProvider();
           updateCommandPreset();
           updateCodexModelPreset();
+          updateGeminiModelPreset();
           const previewEl = $("outputPreview");
           if (previewEl) previewEl.textContent = PREVIEW_TEMPLATE;
           setOutputTab("preview");

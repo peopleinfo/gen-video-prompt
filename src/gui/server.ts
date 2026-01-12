@@ -186,6 +186,14 @@ function buildCodexArgs(
   return args;
 }
 
+function buildGeminiArgs(model: string | undefined): string[] {
+  const args: string[] = [];
+  if (model) {
+    args.push("--model", model);
+  }
+  return args;
+}
+
 function extensionForMime(mime: string): string {
   switch (mime) {
     case "image/png":
@@ -531,8 +539,13 @@ async function main(): Promise<void> {
 
             const codexModel = asString(body.codex_model);
             const codexSession = asString(body.codex_session) ?? "new";
+            const geminiModel = asString(body.gemini_model);
             const effectiveArgs =
-              command === "codex" ? buildCodexArgs(codexModel, codexSession, uploadedFiles) : [];
+              command === "codex"
+                ? buildCodexArgs(codexModel, codexSession, uploadedFiles)
+                : command === "gemini"
+                  ? buildGeminiArgs(geminiModel)
+                  : [];
 
             const out = await runCommandLlm({ command, args: effectiveArgs, input: instruction });
             json(res, 200, { ok: true, mode: "generated", text: out });
@@ -670,8 +683,13 @@ async function main(): Promise<void> {
 
             const codexModel = asString(body.codex_model);
             const codexSession = asString(body.codex_session) ?? "new";
+            const geminiModel = asString(body.gemini_model);
             const effectiveArgs =
-              command === "codex" ? buildCodexArgs(codexModel, codexSession, uploadedFiles) : [];
+              command === "codex"
+                ? buildCodexArgs(codexModel, codexSession, uploadedFiles)
+                : command === "gemini"
+                  ? buildGeminiArgs(geminiModel)
+                  : [];
 
             const out = await runCommandLlm({ command, args: effectiveArgs, input: prompt });
             json(res, 200, { ok: true, mode: "chat", text: out });
