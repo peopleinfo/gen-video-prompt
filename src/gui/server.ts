@@ -1,6 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -209,6 +210,105 @@ function extensionForMime(mime: string): string {
     default:
       return ".bin";
   }
+}
+
+function extensionForVideoMime(mime: string): string {
+  switch (mime) {
+    case "video/mp4":
+      return ".mp4";
+    case "video/quicktime":
+      return ".mov";
+    case "video/webm":
+      return ".webm";
+    case "video/x-matroska":
+      return ".mkv";
+    default:
+      return ".mp4";
+  }
+}
+
+function sanitizeFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function stripDataUrl(raw: string): string {
+  const index = raw.indexOf("base64,");
+  return index >= 0 ? raw.slice(index + 7) : raw;
+}
+
+function escapeConcatPath(value: string): string {
+  return value.replace(/'/g, "'\\''");
+}
+
+async function runFfmpeg(args: string[], timeoutMs = 120_000): Promise<void> {
+  const ffmpegPath = await resolveFfmpegPath();
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(ffmpegPath, args, {
+      stdio: ["ignore", "ignore", "pipe"],
+      cwd: ROOT_DIR,
+      env: process.env,
+    });
+
+    let stderr = Buffer.alloc(0);
+    const killTimer = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, timeoutMs);
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr = Buffer.concat([stderr, chunk]);
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(killTimer);
+      const code = err && typeof err === "object" && "code" in err ? String(err.code) : "";
+      if (code === "ENOENT") {
+        reject(
+          new Error(
+            "ffmpeg not found. Place a bundled binary in bin/ffmpeg or set FFMPEG_PATH to your ffmpeg executable."
+          )
+        );
+        return;
+      }
+      reject(err);
+    });
+
+    child.on("close", (code, signal) => {
+      clearTimeout(killTimer);
+      if (code !== 0) {
+        const signalInfo = signal ? `, signal ${signal}` : "";
+        reject(new Error(`ffmpeg failed${signalInfo}: ${stderr.toString("utf8") || "no stderr"}`));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+async function resolveBundledFfmpegPath(): Promise<string | null> {
+  const baseDir = path.join(ROOT_DIR, "bin", "ffmpeg");
+  const candidates: string[] = [];
+  if (process.platform === "darwin") {
+    candidates.push(path.join(baseDir, "darwin-arm64", "ffmpeg"));
+    candidates.push(path.join(baseDir, "darwin-x64", "ffmpeg"));
+  } else if (process.platform === "win32") {
+    candidates.push(path.join(baseDir, "win32-x64", "ffmpeg.exe"));
+  }
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      // keep checking
+    }
+  }
+  return null;
+}
+
+async function resolveFfmpegPath(): Promise<string> {
+  const override = process.env.FFMPEG_PATH;
+  if (override) return override;
+  const bundled = await resolveBundledFfmpegPath();
+  return bundled ?? "ffmpeg";
 }
 
 async function runCommandLlm(params: {
@@ -621,6 +721,55 @@ async function main(): Promise<void> {
         }
 
         json(res, 400, { ok: false, error: `Unknown provider: ${provider}` });
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/api/merge-videos") {
+        const body = await readJson(req, 200_000_000);
+        const rawFiles = Array.isArray(body.files) ? body.files : [];
+        if (!rawFiles.length) {
+          json(res, 400, { ok: false, error: "No video files provided." });
+          return;
+        }
+        const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "gen-video-merge-"));
+        const filePaths: string[] = [];
+        try {
+          for (let index = 0; index < rawFiles.length; index += 1) {
+            const file = rawFiles[index];
+            const name = asString(file && file.name) ?? `part-${index + 1}`;
+            const type = asString(file && file.type) ?? "video/mp4";
+            const data = asString(file && file.data) ?? "";
+            if (!data) {
+              json(res, 400, { ok: false, error: `Missing data for ${name}.` });
+              return;
+            }
+            const baseName = sanitizeFileName(path.parse(name).name || `part-${index + 1}`);
+            const ext = extensionForVideoMime(type);
+            const fileName = `${String(index + 1).padStart(2, "0")}-${baseName}${ext}`;
+            const filePath = path.join(tmpDir, fileName);
+            const buffer = Buffer.from(stripDataUrl(data), "base64");
+            await fs.writeFile(filePath, buffer);
+            filePaths.push(filePath);
+          }
+
+          const listPath = path.join(tmpDir, "inputs.txt");
+          const listBody = filePaths.map((p) => `file '${escapeConcatPath(p)}'`).join("\n");
+          await fs.writeFile(listPath, listBody);
+
+          const outputPath = path.join(tmpDir, "merged.mp4");
+          await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", outputPath]);
+          const merged = await fs.readFile(outputPath);
+          json(res, 200, {
+            ok: true,
+            file: {
+              name: "merged.mp4",
+              type: "video/mp4",
+              data: merged.toString("base64"),
+            },
+          });
+        } finally {
+          await fs.rm(tmpDir, { recursive: true, force: true });
+        }
         return;
       }
 

@@ -447,6 +447,7 @@
         <div class="tabs" style="border-bottom: 1px solid var(--border)">
           <div class="tab" id="tab-preview" data-active="true">Preview</div>
           <div class="tab" id="tab-output" data-active="false">Output</div>
+          <div class="tab" id="tab-video" data-active="false">Preview Video</div>
         </div>
         <div
           id="outputActions"
@@ -464,6 +465,22 @@
         </div>
         <pre id="outputPreview">(ready)</pre>
         <pre id="output" style="display: none">(ready)</pre>
+        <div id="videoPanel" style="display: none; padding: 14px">
+          <label for="videoParts">Video parts (in order)</label>
+          <input id="videoParts" type="file" accept="video/*" multiple />
+          <div id="videoPartsList" style="margin-top: 6px; font-size: 12px; color: var(--muted)"></div>
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap">
+            <button id="btnMergeVideos" type="button">Merge videos</button>
+            <button id="btnClearVideos" type="button">Clear</button>
+            <div id="videoStatus" style="font-size: 12px; color: var(--muted)"></div>
+          </div>
+          <div
+            id="videoPreviewWrapper"
+            style="width: min(360px, 100%); aspect-ratio: 9 / 16; margin-top: 10px; display: none"
+          >
+            <video id="videoPreview" controls style="width: 100%; height: 100%; object-fit: contain"></video>
+          </div>
+        </div>
       </section>
     </main>
     <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
@@ -505,18 +522,23 @@
       $("tab-tools").addEventListener("click", () => setTab("tools"));
 
       function setOutputTab(active) {
-        const views = ["output", "preview"];
+        const views = ["output", "preview", "video"];
         for (const v of views) {
           $("tab-" + v).dataset.active = String(v === active);
-          const el = v === "output" ? $("output") : $("outputPreview");
-          if (el) el.style.display = v === active ? "block" : "none";
         }
+        const outputEl = $("output");
+        const previewEl = $("outputPreview");
+        const videoPanel = $("videoPanel");
+        if (outputEl) outputEl.style.display = active === "output" ? "block" : "none";
+        if (previewEl) previewEl.style.display = active === "preview" ? "block" : "none";
+        if (videoPanel) videoPanel.style.display = active === "video" ? "block" : "none";
         const actions = $("outputActions");
         if (actions) actions.style.display = active === "output" ? "flex" : "none";
       }
 
       $("tab-preview").addEventListener("click", () => setOutputTab("preview"));
       $("tab-output").addEventListener("click", () => setOutputTab("output"));
+      $("tab-video").addEventListener("click", () => setOutputTab("video"));
 
       async function copyToClipboard(text) {
         if (!text) return false;
@@ -900,6 +922,7 @@
       const WORKSPACE_KEY = "gen-video-prompt.gui.workspaces.v1";
       let llmConnected = false;
       let generateAbortController = null;
+      let mergedVideoUrl = "";
       let workspaces = [];
       let activeWorkspaceId = "";
 
@@ -913,6 +936,20 @@
         const btn = $("btnAbort");
         if (!btn) return;
         btn.disabled = !enabled;
+      }
+
+      function clearVideoPreview() {
+        const preview = $("videoPreview");
+        if (preview) {
+          preview.pause();
+          preview.removeAttribute("src");
+          const wrapper = $("videoPreviewWrapper");
+          if (wrapper) wrapper.style.display = "none";
+        }
+        if (mergedVideoUrl) {
+          URL.revokeObjectURL(mergedVideoUrl);
+          mergedVideoUrl = "";
+        }
       }
 
       function newWorkspace(name) {
@@ -1187,6 +1224,64 @@
         });
       }
 
+      function renderFilesList(inputId, listId, removeLabel = "Remove file") {
+        const input = $(inputId);
+        const list = $(listId);
+        if (!input || !list) return;
+        const files = input.files ? Array.from(input.files) : [];
+        if (!files.length) {
+          list.textContent = "";
+          return;
+        }
+        list.innerHTML = "";
+        files.forEach((file, index) => {
+          const row = document.createElement("div");
+          row.style.display = "flex";
+          row.style.alignItems = "center";
+          row.style.gap = "8px";
+          row.style.marginTop = "4px";
+          const name = document.createElement("span");
+          name.style.flex = "1";
+          name.style.minWidth = "0";
+          const fileName = file.name;
+          const maxName = 32;
+          const displayName =
+            fileName.length > maxName
+              ? `${fileName.slice(0, 18)}...${fileName.slice(-8)}`
+              : fileName;
+          name.textContent = `${displayName} (${Math.round(file.size / 1024)} KB)`;
+          name.title = fileName;
+          name.style.whiteSpace = "nowrap";
+          name.style.overflow = "hidden";
+          name.style.textOverflow = "ellipsis";
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "X";
+          remove.title = removeLabel;
+          remove.setAttribute("aria-label", removeLabel);
+          remove.style.marginLeft = "auto";
+          remove.style.marginTop = "0";
+          remove.style.padding = "2px 8px";
+          remove.style.borderColor = "var(--danger)";
+          remove.style.background = "rgba(255, 106, 106, 0.2)";
+          remove.style.color = "var(--danger)";
+          remove.style.fontWeight = "700";
+          remove.style.fontSize = "12px";
+          remove.style.lineHeight = "1";
+          remove.addEventListener("click", () => {
+            const dt = new DataTransfer();
+            files.forEach((f, i) => {
+              if (i !== index) dt.items.add(f);
+            });
+            input.files = dt.files;
+            renderFilesList(inputId, listId, removeLabel);
+          });
+          row.appendChild(name);
+          row.appendChild(remove);
+          list.appendChild(row);
+        });
+      }
+
       function getImageNames(inputId) {
         const input = $(inputId);
         if (!input || !input.files) return [];
@@ -1226,6 +1321,51 @@
               })
           )
         );
+      }
+
+      async function readVideos(inputId) {
+        const input = $(inputId);
+        if (!input || !input.files || input.files.length === 0) return [];
+        const files = Array.from(input.files);
+        const maxBytes = 200 * 1024 * 1024;
+        const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+        if (totalBytes > maxBytes) {
+          throw new Error("Total video size exceeds 200MB.");
+        }
+        return await Promise.all(
+          files.map(
+            (file) =>
+              new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const result = reader.result;
+                  if (typeof result !== "string") {
+                    reject(new Error("Failed to read video data."));
+                    return;
+                  }
+                  const comma = result.indexOf(",");
+                  const data = comma >= 0 ? result.slice(comma + 1) : "";
+                  if (!data) {
+                    reject(new Error("Invalid video data."));
+                    return;
+                  }
+                  resolve({ name: file.name, type: file.type, data });
+                };
+                reader.onerror = () => reject(new Error("Failed to read video file."));
+                reader.readAsDataURL(file);
+              })
+          )
+        );
+      }
+
+      function base64ToBlob(base64, mimeType) {
+        const binary = atob(base64);
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i += 1) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return new Blob([bytes], { type: mimeType });
       }
 
       function buildStoryWithImages(story, imageNames) {
@@ -1592,6 +1732,50 @@
         }
       });
 
+      $("btnMergeVideos").addEventListener("click", async () => {
+        const status = $("videoStatus");
+        if (status) status.textContent = "Merging...";
+        try {
+          const files = await readVideos("videoParts");
+          if (!files.length) {
+            if (status) status.textContent = "Select video parts first.";
+            return;
+          }
+          clearVideoPreview();
+          const data = await api("/api/merge-videos", {
+            method: "POST",
+            body: JSON.stringify({ files }),
+          });
+          const file = data && data.file ? data.file : null;
+          if (!file || !file.data) {
+            throw new Error("Missing merged video data.");
+          }
+          const mimeType = file.type || "video/mp4";
+          const blob = base64ToBlob(file.data, mimeType);
+          mergedVideoUrl = URL.createObjectURL(blob);
+          const preview = $("videoPreview");
+          const wrapper = $("videoPreviewWrapper");
+          if (preview) {
+            preview.src = mergedVideoUrl;
+            if (wrapper) wrapper.style.display = "block";
+            preview.load();
+          }
+          if (status) status.textContent = "Merged.";
+        } catch (e) {
+          if (status) status.textContent = "Error.";
+          setOutput(e && e.message ? e.message : String(e), true);
+        }
+      });
+
+      $("btnClearVideos").addEventListener("click", () => {
+        const input = $("videoParts");
+        if (input) input.value = "";
+        renderFilesList("videoParts", "videoPartsList", "Remove video");
+        const status = $("videoStatus");
+        if (status) status.textContent = "";
+        clearVideoPreview();
+      });
+
       $("btnLoadDocs").addEventListener("click", async () => {
         try {
           await loadDocs();
@@ -1708,6 +1892,15 @@
           const promptImagesEl = $("promptImages");
           if (promptImagesEl) {
             promptImagesEl.addEventListener("change", () => renderImagesList("promptImages", "promptImagesList"));
+          }
+          const videoPartsEl = $("videoParts");
+          if (videoPartsEl) {
+            videoPartsEl.addEventListener("change", () => {
+              renderFilesList("videoParts", "videoPartsList", "Remove video");
+              const status = $("videoStatus");
+              if (status) status.textContent = "";
+              clearVideoPreview();
+            });
           }
           const promptFieldIds = [
             "promptName",

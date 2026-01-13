@@ -43,6 +43,14 @@ npm run gui:cert
 HTTPS=1 SSL_KEY=tmp/certs/gui.key.pem SSL_CERT=tmp/certs/gui.cert.pem npm run gui
 ```
 
+Video merge (Preview Video tab):
+
+- The GUI will use a bundled ffmpeg binary if present.
+- Place ffmpeg here:
+  - macOS (Apple Silicon): `bin/ffmpeg/darwin-arm64/ffmpeg`
+  - macOS (Intel): `bin/ffmpeg/darwin-x64/ffmpeg`
+- Or set `FFMPEG_PATH` to a custom ffmpeg executable.
+
 ## Filling `(unspecified)` with an LLM (optional)
 
 The GUI can fill missing fields by using either:
