@@ -36,6 +36,13 @@ Notes:
 - This UI only returns MCP prompt templates and document content; it does not run an LLM.
 - The GUI uses `node dist/server.js` under the hood, so it requires a successful `npm run build`.
 
+HTTPS (clipboard image support often requires a secure context):
+
+```bash
+npm run gui:cert
+HTTPS=1 SSL_KEY=tmp/certs/gui.key.pem SSL_CERT=tmp/certs/gui.cert.pem npm run gui
+```
+
 ## Filling `(unspecified)` with an LLM (optional)
 
 The GUI can fill missing fields by using either:

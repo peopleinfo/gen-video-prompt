@@ -117,6 +117,12 @@
         border-color: rgba(106, 166, 255, 0.55);
         background: rgba(106, 166, 255, 0.18);
       }
+      .tab[data-disabled="true"] {
+        opacity: 0.45;
+        cursor: not-allowed;
+        border-color: var(--border);
+        background: rgba(0, 0, 0, 0.12);
+      }
       pre {
         margin: 0;
         padding: 14px;
@@ -413,6 +419,7 @@
 
           <button id="btnGetPrompt">Get template</button>
           <button id="btnGenerate" style="margin-left: 8px">Generate (fill)</button>
+          <button id="btnAbort" type="button" style="margin-left: 8px" disabled>Abort</button>
           <div id="status" style="margin-top: 10px; font-size: 12px; color: var(--muted)"></div>
         </div>
 
@@ -450,6 +457,10 @@
           </select>
           <button id="btnCopyParts" type="button" style="margin-top: 0" disabled>Copy all parts</button>
           <button id="btnCopyOutput" type="button" style="margin-top: 0">Copy output</button>
+          <div
+            id="partImageInputs"
+            style="display: none; gap: 8px; align-items: flex-end; flex-wrap: wrap; width: 100%"
+          ></div>
         </div>
         <pre id="outputPreview">(ready)</pre>
         <pre id="output" style="display: none">(ready)</pre>
@@ -460,7 +471,26 @@
     <script>
       const $ = (id) => document.getElementById(id);
 
+      function isTabDisabled(name) {
+        const el = $("tab-" + name);
+        return el && el.dataset.disabled === "true";
+      }
+
+      function setTabDisabled(name, disabled) {
+        const el = $("tab-" + name);
+        if (!el) return;
+        el.dataset.disabled = String(disabled);
+        el.setAttribute("aria-disabled", String(disabled));
+        if (disabled && el.dataset.active === "true") {
+          setTab("setup");
+        }
+      }
+
       function setTab(active) {
+        if (isTabDisabled(active)) {
+          showToast("Connect an LLM to use Chat and Prompts.", "error");
+          return;
+        }
         const views = ["setup", "chat", "prompts", "docs", "tools"];
         for (const v of views) {
           $("tab-" + v).dataset.active = String(v === active);
@@ -505,6 +535,103 @@
         return true;
       }
 
+      function escapeHtml(text) {
+        return (text || "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
+      }
+
+      async function copyTextWithOptionalImage(text, imageFile) {
+        if (!text) return { copied: false, usedImage: false };
+        if (!imageFile) {
+          await copyToClipboard(text);
+          return { copied: true, usedImage: false };
+        }
+        const canWrite =
+          navigator.clipboard?.write && typeof ClipboardItem !== "undefined";
+        if (!canWrite) {
+          await copyToClipboard(text);
+          return { copied: true, usedImage: false };
+        }
+        const prepared = await normalizeImageForClipboard(imageFile);
+        const mimeType = prepared.type || "image/png";
+        if (ClipboardItem.supports && !ClipboardItem.supports(mimeType)) {
+          await copyToClipboard(text);
+          return { copied: true, usedImage: false };
+        }
+        const safeText = escapeHtml(text).replaceAll("\n", "<br>");
+        const html = `<p>${safeText}</p>`;
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/plain": new Blob([text], { type: "text/plain" }),
+            "text/html": new Blob([html], { type: "text/html" }),
+            [mimeType]: prepared,
+          }),
+        ]);
+        return { copied: true, usedImage: true };
+      }
+
+      async function copyImageOnly(imageFile) {
+        if (!imageFile) return false;
+        const canWrite =
+          navigator.clipboard?.write && typeof ClipboardItem !== "undefined";
+        if (!canWrite) return false;
+        const prepared = await normalizeImageForClipboard(imageFile);
+        const mimeType = prepared.type || "image/png";
+        if (ClipboardItem.supports && !ClipboardItem.supports(mimeType)) return false;
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            [mimeType]: prepared,
+          }),
+        ]);
+        return true;
+      }
+
+      async function normalizeImageForClipboard(file) {
+        const mimeType = file.type || "image/png";
+        if (mimeType === "image/png") return file;
+        if (typeof createImageBitmap === "function") {
+          const bitmap = await createImageBitmap(file);
+          const canvas = document.createElement("canvas");
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Failed to render image.");
+          ctx.drawImage(bitmap, 0, 0);
+          if (bitmap.close) bitmap.close();
+          return await new Promise((resolve, reject) => {
+            canvas.toBlob((blob) => {
+              if (blob) resolve(blob);
+              else reject(new Error("Failed to encode image."));
+            }, "image/png");
+          });
+        }
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        try {
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = url;
+          });
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Failed to render image.");
+          ctx.drawImage(img, 0, 0);
+          return await new Promise((resolve, reject) => {
+            canvas.toBlob((blob) => {
+              if (blob) resolve(blob);
+              else reject(new Error("Failed to encode image."));
+            }, "image/png");
+          });
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+
       function extractParts(text) {
         if (!text) return [];
         const lines = text.split(/\r?\n/);
@@ -530,12 +657,97 @@
       }
 
       let outputParts = [];
+      const partImageFiles = new Map();
+
+      function renderPartImageInputs() {
+        const container = $("partImageInputs");
+        if (!container) return;
+        container.innerHTML = "";
+        if (!outputParts.length) {
+          container.style.display = "none";
+          return;
+        }
+        container.style.display = "flex";
+        outputParts.forEach((part, index) => {
+          const wrapper = document.createElement("div");
+          wrapper.style.display = "flex";
+          wrapper.style.flexDirection = "column";
+          wrapper.style.gap = "4px";
+          wrapper.style.minWidth = "160px";
+          const label = document.createElement("label");
+          const labelText = part.label || `Part ${index + 1}`;
+          label.textContent = `${labelText} image`;
+          label.style.fontSize = "12px";
+          label.style.color = "var(--muted)";
+          label.setAttribute("for", `partImage-${index}`);
+          const input = document.createElement("input");
+          input.type = "file";
+          input.accept = "image/*";
+          input.id = `partImage-${index}`;
+          const copyButton = document.createElement("button");
+          copyButton.type = "button";
+          copyButton.textContent = "Copy image";
+          copyButton.style.marginTop = "0";
+          copyButton.style.display = "none";
+          const removeButton = document.createElement("button");
+          removeButton.type = "button";
+          removeButton.textContent = "Remove image";
+          removeButton.style.marginTop = "0";
+          removeButton.style.display = "none";
+          removeButton.style.borderColor = "var(--danger)";
+          removeButton.style.background = "rgba(255, 106, 106, 0.2)";
+          removeButton.style.color = "var(--danger)";
+          input.addEventListener("change", () => {
+            const file = input.files && input.files[0] ? input.files[0] : null;
+            if (file) {
+              partImageFiles.set(index, file);
+              copyButton.style.display = "inline-flex";
+              removeButton.style.display = "inline-flex";
+            } else {
+              partImageFiles.delete(index);
+              copyButton.style.display = "none";
+              removeButton.style.display = "none";
+            }
+          });
+          removeButton.addEventListener("click", () => {
+            partImageFiles.delete(index);
+            input.value = "";
+            copyButton.style.display = "none";
+            removeButton.style.display = "none";
+            showToast(`Removed ${labelText} image.`);
+          });
+          copyButton.addEventListener("click", async () => {
+            const file = partImageFiles.get(index);
+            if (!file) return;
+            try {
+              if (!window.isSecureContext) {
+                showToast("Image copy requires HTTPS (or localhost).", "error");
+                return;
+              }
+              const copied = await copyImageOnly(file);
+              if (copied) {
+                showToast(`Copied ${labelText} image.`);
+              } else {
+                showToast("Image copy not supported in this browser.", "error");
+              }
+            } catch {
+              showToast("Copy failed.", "error");
+            }
+          });
+          wrapper.appendChild(label);
+          wrapper.appendChild(input);
+          wrapper.appendChild(copyButton);
+          wrapper.appendChild(removeButton);
+          container.appendChild(wrapper);
+        });
+      }
 
       function updateOutputParts(text, isError = false, isLoading = false) {
         const select = $("partSelect");
         const copyAll = $("btnCopyParts");
         if (!select || !copyAll) return;
         outputParts = [];
+        partImageFiles.clear();
         select.innerHTML = "";
         if (isLoading) {
           select.disabled = true;
@@ -544,6 +756,7 @@
           opt.value = "";
           opt.textContent = "Loading parts...";
           select.appendChild(opt);
+          renderPartImageInputs();
           return;
         }
         if (isError || !text || !text.trim()) {
@@ -553,6 +766,7 @@
           opt.value = "";
           opt.textContent = "No parts detected";
           select.appendChild(opt);
+          renderPartImageInputs();
           return;
         }
         outputParts = extractParts(text);
@@ -563,6 +777,7 @@
           opt.value = "";
           opt.textContent = "No parts detected";
           select.appendChild(opt);
+          renderPartImageInputs();
           return;
         }
         select.disabled = false;
@@ -578,6 +793,7 @@
           select.appendChild(opt);
         });
         select.value = "";
+        renderPartImageInputs();
       }
 
       $("partSelect").addEventListener("change", async (event) => {
@@ -586,8 +802,13 @@
         const index = Number(value);
         if (!Number.isFinite(index) || !outputParts[index]) return;
         try {
-          await copyToClipboard(outputParts[index].text);
-          showToast(`Copied ${outputParts[index].label || `Part ${index + 1}`}.`);
+          const imageFile = partImageFiles.get(index);
+          const result = await copyTextWithOptionalImage(outputParts[index].text, imageFile);
+          if (result.usedImage) {
+            showToast(`Copied ${outputParts[index].label || `Part ${index + 1}`} with image.`);
+          } else {
+            showToast(`Copied ${outputParts[index].label || `Part ${index + 1}`}.`);
+          }
         } catch {
           showToast("Copy failed.", "error");
         } finally {
@@ -677,8 +898,22 @@
       }
 
       const WORKSPACE_KEY = "gen-video-prompt.gui.workspaces.v1";
+      let llmConnected = false;
+      let generateAbortController = null;
       let workspaces = [];
       let activeWorkspaceId = "";
+
+      function updateLlmTabs() {
+        const disabled = !llmConnected;
+        setTabDisabled("chat", disabled);
+        setTabDisabled("prompts", disabled);
+      }
+
+      function setGenerateAbortEnabled(enabled) {
+        const btn = $("btnAbort");
+        if (!btn) return;
+        btn.disabled = !enabled;
+      }
 
       function newWorkspace(name) {
         return {
@@ -1273,9 +1508,24 @@
         }
       });
 
+      $("btnAbort").addEventListener("click", () => {
+        if (!generateAbortController) return;
+        generateAbortController.abort();
+        generateAbortController = null;
+        setGenerateAbortEnabled(false);
+        $("status").textContent = "Aborted.";
+        setOutput("Aborted.");
+        showToast("Generation aborted.");
+      });
+
       $("btnGenerate").addEventListener("click", async () => {
         $("status").textContent = "Generating...";
         showOutputLoading("Generating...");
+        if (generateAbortController) {
+          generateAbortController.abort();
+        }
+        generateAbortController = new AbortController();
+        setGenerateAbortEnabled(true);
         try {
           assertValidPartLength();
           const provider = $("provider").value || "none";
@@ -1320,13 +1570,25 @@
 
           saveSettings(captureSettings());
 
-          const data = await api("/api/generate", { method: "POST", body: JSON.stringify(payload) });
+          const data = await api("/api/generate", {
+            method: "POST",
+            body: JSON.stringify(payload),
+            signal: generateAbortController.signal,
+          });
           setOutput(data.text || JSON.stringify(data, null, 2));
           saveActiveWorkspaceOutput(data.text || JSON.stringify(data, null, 2));
           $("status").textContent = "Done.";
         } catch (e) {
-          $("status").textContent = "Error.";
-          setOutput(e && e.message ? e.message : String(e), true);
+          if (e && e.name === "AbortError") {
+            $("status").textContent = "Aborted.";
+            setOutput("Aborted.");
+          } else {
+            $("status").textContent = "Error.";
+            setOutput(e && e.message ? e.message : String(e), true);
+          }
+        } finally {
+          generateAbortController = null;
+          setGenerateAbortEnabled(false);
         }
       });
 
@@ -1377,27 +1639,38 @@
       });
 
       $("btnConnect").addEventListener("click", async () => {
+        const btn = $("btnConnect");
+        if (llmConnected) {
+          llmConnected = false;
+          updateLlmTabs();
+          setLlmStatus("Disconnected.", true);
+          btn.textContent = "Connect";
+          return;
+        }
         try {
-          const btn = $("btnConnect");
           btn.disabled = true;
           btn.textContent = "Checking...";
           setLlmStatus("Checking LLM...");
           const config = collectLlmConfig();
           if (config.provider === "none") {
             setLlmStatus("Select an LLM provider first.", true);
+            llmConnected = false;
+            updateLlmTabs();
             return;
           }
           await api("/api/chat", {
             method: "POST",
             body: JSON.stringify({ prompt: "Reply with OK.", ...config }),
           });
+          llmConnected = true;
           setLlmStatus("Connected.");
         } catch (e) {
+          llmConnected = false;
           setLlmStatus(e && e.message ? e.message : "Not connected.", true);
         } finally {
-          const btn = $("btnConnect");
+          updateLlmTabs();
           btn.disabled = false;
-          btn.textContent = "Connect";
+          btn.textContent = llmConnected ? "Disconnect" : "Connect";
         }
       });
 
@@ -1513,6 +1786,8 @@
             cmdEl.style.display = providerEl.value === "command" ? "block" : "none";
             ollamaEl.style.display = providerEl.value === "ollama" ? "block" : "none";
             openaiEl.style.display = providerEl.value === "openai_compatible" ? "block" : "none";
+            llmConnected = false;
+            updateLlmTabs();
           };
           providerEl.addEventListener("change", updateProvider);
           if (cmdPresetEl) {
@@ -1539,9 +1814,13 @@
           if (previewEl) previewEl.textContent = PREVIEW_TEMPLATE;
           setOutputTab("preview");
           setLlmStatus("Server connected. Click Connect to test LLM.");
+          llmConnected = false;
+          updateLlmTabs();
 
           setOutput("Connected. Choose a prompt and click “Get prompt template”.");
         } catch (e) {
+          llmConnected = false;
+          updateLlmTabs();
           setLlmStatus("Not connected.", true);
           setOutput(
             "GUI server is up, but MCP bridge is not ready. Did you run `npm run build`?\n\n" +

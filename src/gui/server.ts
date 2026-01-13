@@ -1,4 +1,5 @@
 import http from "node:http";
+import https from "node:https";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -10,6 +11,9 @@ type JsonRecord = Record<string, unknown>;
 const ROOT_DIR = process.cwd();
 const HOST = process.env.HOST ?? "127.0.0.1";
 const PORT = Number(process.env.PORT ?? "3333");
+const USE_HTTPS = process.env.HTTPS === "1";
+const SSL_KEY_PATH = process.env.SSL_KEY ?? "";
+const SSL_CERT_PATH = process.env.SSL_CERT ?? "";
 const ENABLE_COMMAND_LLM = process.env.ENABLE_COMMAND_LLM === "1";
 const ENABLE_HTTP_LLM = process.env.ENABLE_HTTP_LLM === "1";
 const MCP_SERVER_DEV = process.env.MCP_SERVER_DEV === "1";
@@ -368,10 +372,11 @@ async function main(): Promise<void> {
 
   const mcp = createMcpClient();
 
-  const server = http.createServer(async (req, res) => {
+  const requestHandler = async (req: http.IncomingMessage, res: http.ServerResponse) => {
     try {
       const method = req.method ?? "GET";
-      const url = new URL(req.url ?? "/", `http://${HOST}:${PORT}`);
+      const scheme = USE_HTTPS ? "https" : "http";
+      const url = new URL(req.url ?? "/", `${scheme}://${HOST}:${PORT}`);
 
       if (method === "GET" && url.pathname === "/api/health") {
         json(res, 200, { ok: true });
@@ -825,7 +830,21 @@ async function main(): Promise<void> {
     } catch (error) {
       json(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
     }
-  });
+  };
+
+  let server: http.Server | https.Server;
+  if (USE_HTTPS) {
+    if (!SSL_KEY_PATH || !SSL_CERT_PATH) {
+      throw new Error("HTTPS=1 requires SSL_KEY and SSL_CERT environment variables.");
+    }
+    const [key, cert] = await Promise.all([
+      fs.readFile(SSL_KEY_PATH),
+      fs.readFile(SSL_CERT_PATH),
+    ]);
+    server = https.createServer({ key, cert }, requestHandler);
+  } else {
+    server = http.createServer(requestHandler);
+  }
 
   const shutdown = async (): Promise<void> => {
     await mcp.close();
@@ -846,7 +865,7 @@ async function main(): Promise<void> {
     if (code === "EPERM") {
       throw new Error(
         [
-          `Cannot listen on http://${HOST}:${PORT} (EPERM).`,
+          `Cannot listen on ${USE_HTTPS ? "https" : "http"}://${HOST}:${PORT} (EPERM).`,
           "This usually means your environment blocks binding to local TCP ports (sandbox/restrictions).",
           "Try running from a normal terminal session, or pick a different port:",
           "  PORT=8080 npm run gui",
@@ -855,13 +874,15 @@ async function main(): Promise<void> {
         ].join("\n")
       );
     }
-    throw new Error(`Failed to start GUI server on http://${HOST}:${PORT}: ${message}`);
+    throw new Error(
+      `Failed to start GUI server on ${USE_HTTPS ? "https" : "http"}://${HOST}:${PORT}: ${message}`
+    );
   }
   // eslint-disable-next-line no-console
   const address = server.address();
   const boundPort =
     address && typeof address === "object" && "port" in address ? Number(address.port) : PORT;
-  console.log(`GUI running: http://${HOST}:${boundPort}`);
+  console.log(`GUI running: ${USE_HTTPS ? "https" : "http"}://${HOST}:${boundPort}`);
 }
 
 main().catch((error) => {
