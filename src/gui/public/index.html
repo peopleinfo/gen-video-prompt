@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>gen-video-prompt GUI</title>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/compressorjs@1.2.1/dist/compressor.min.js"></script>
     <style>
       :root {
         color-scheme: light dark;
@@ -221,6 +222,7 @@
             <select id="commandPreset">
               <option value="codex" selected>Codex CLI</option>
               <option value="gemini">Gemini CLI</option>
+              <option value="agent">Cursor Agent</option>
               <option value="custom">Other CLI</option>
             </select>
 
@@ -299,6 +301,21 @@
               Enable by starting GUI with <code>ENABLE_HTTP_LLM=1</code>. API key is stored in your browser localStorage.
             </div>
           </div>
+
+          <div style="margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(255, 255, 255, 0.02)">
+            <label style="margin-top: 0">Global Settings</label>
+            <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px">
+            <input id="compressImages" type="checkbox" style="width: auto; margin: 0" />
+            <label for="compressImages" style="margin: 0; cursor: pointer; color: var(--text)">Compress images when picking (faster upload)</label>
+          </div>
+          <div id="compressionSettings" style="margin-top: 12px; display: none; flex-direction: column; gap: 8px; padding-left: 26px; border-left: 2px solid var(--accent)">
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <label style="margin: 0; font-size: 0.85em; color: var(--text-dim)">Compression Quality</label>
+              <span id="qualityValue" style="font-size: 0.85em; font-weight: bold; color: var(--accent)">0.8</span>
+            </div>
+            <input id="compressionQuality" type="range" min="0.1" max="1.0" step="0.05" value="0.8" style="width: 100%; margin: 0; height: 4px; background: var(--border); border-radius: 2px; appearance: none; cursor: pointer;" />
+          </div>
+        </div>
 
           <div class="row" style="margin-top: 16px; align-items: center">
             <div>
@@ -539,6 +556,16 @@
       $("tab-preview").addEventListener("click", () => setOutputTab("preview"));
       $("tab-output").addEventListener("click", () => setOutputTab("output"));
       $("tab-video").addEventListener("click", () => setOutputTab("video"));
+      
+      // Toggle compression settings visibility
+      $("compressImages").addEventListener("change", (e) => {
+        $("compressionSettings").style.display = e.target.checked ? "flex" : "none";
+      });
+      
+      // Update quality value display
+      $("compressionQuality").addEventListener("input", (e) => {
+        $("qualityValue").textContent = e.target.value;
+      });
 
       async function copyToClipboard(text) {
         if (!text) return false;
@@ -654,6 +681,95 @@
         }
       }
 
+      async function compressImage(file, quality = 0.8, maxWidth = 1280) {
+        if (!file.type.startsWith("image/")) return file;
+        
+        // Use Compressor.js (extremely lightweight ~10KB and robust)
+        if (typeof Compressor !== "undefined") {
+          return new Promise((resolve) => {
+            new Compressor(file, {
+              quality: quality,
+              maxWidth: maxWidth,
+              success(result) {
+                resolve(new File([result], file.name, {
+                  type: result.type,
+                  lastModified: Date.now(),
+                }));
+              },
+              error(err) {
+                console.warn("Compressor.js failed, falling back to canvas:", err);
+                // Fallback to manual canvas compression
+                manualCompress(file, quality, maxWidth).then(resolve);
+              },
+            });
+          });
+        }
+
+        return manualCompress(file, quality, maxWidth);
+      }
+
+      function manualCompress(file, quality, maxWidth) {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            let width = img.width;
+            let height = img.height;
+            if (width > maxWidth) {
+              height = (height * maxWidth) / width;
+              width = maxWidth;
+            }
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              URL.revokeObjectURL(img.src);
+              resolve(file);
+              return;
+            }
+            ctx.drawImage(img, 0, 0, width, height);
+            canvas.toBlob(
+              (blob) => {
+                URL.revokeObjectURL(img.src);
+                if (blob) {
+                  const compressed = new File([blob], file.name, {
+                    type: "image/jpeg",
+                    lastModified: Date.now(),
+                  });
+                  resolve(compressed);
+                } else {
+                  resolve(file);
+                }
+              },
+              "image/jpeg",
+              quality
+            );
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(img.src);
+            resolve(file);
+          };
+          img.src = URL.createObjectURL(file);
+        });
+      }
+
+      async function handleImagePick(inputId, listId) {
+        const input = $(inputId);
+        if (!input || !input.files || !input.files.length) return;
+        const compressEnabled = $("compressImages") && $("compressImages").checked;
+        const quality = parseFloat($("compressionQuality").value) || 0.8;
+        if (compressEnabled) {
+          const originalFiles = Array.from(input.files);
+          const compressedFiles = await Promise.all(originalFiles.map((f) => compressImage(f, quality)));
+          const dt = new DataTransfer();
+          compressedFiles.forEach((f) => {
+            dt.items.add(f);
+          });
+          input.files = dt.files;
+        }
+        renderImagesList(inputId, listId);
+      }
+
       function extractParts(text) {
         if (!text) return [];
         const lines = text.split(/\r?\n/);
@@ -719,7 +835,18 @@
           removeButton.style.borderColor = "var(--danger)";
           removeButton.style.background = "rgba(255, 106, 106, 0.2)";
           removeButton.style.color = "var(--danger)";
-          input.addEventListener("change", () => {
+          input.addEventListener("change", async () => {
+            const compressEnabled = $("compressImages") && $("compressImages").checked;
+            const quality = parseFloat($("compressionQuality").value) || 0.8;
+            if (compressEnabled && input.files && input.files.length) {
+              const originalFiles = Array.from(input.files);
+              const compressedFiles = await Promise.all(originalFiles.map((f) => compressImage(f, quality)));
+              const dt = new DataTransfer();
+              compressedFiles.forEach((f) => {
+                dt.items.add(f);
+              });
+              input.files = dt.files;
+            }
             const file = input.files && input.files[0] ? input.files[0] : null;
             if (file) {
               partImageFiles.set(index, file);
@@ -1384,6 +1511,7 @@
         const preset = $("commandPreset");
         if (preset && preset.value === "codex") return "codex";
         if (preset && preset.value === "gemini") return "gemini";
+        if (preset && preset.value === "agent") return "agent";
         return $("cmd").value || "";
       }
 
@@ -1504,6 +1632,10 @@
         set("openaiBaseUrl", settings.openaiBaseUrl);
         set("openaiModel", settings.openaiModel);
         set("openaiApiKey", settings.openaiApiKey);
+        const compressEl = $("compressImages");
+        if (compressEl) {
+          compressEl.checked = settings.compressImages === true;
+        }
       }
 
       function captureSettings() {
@@ -1522,6 +1654,7 @@
           openaiBaseUrl: $("openaiBaseUrl").value || "",
           openaiModel: $("openaiModel").value || "",
           openaiApiKey: $("openaiApiKey").value || "",
+          compressImages: $("compressImages") ? $("compressImages").checked : false,
         };
       }
 
@@ -1887,11 +2020,11 @@
           wireCustom("aspect", "aspectCustom");
           const chatImagesEl = $("chatImages");
           if (chatImagesEl) {
-            chatImagesEl.addEventListener("change", () => renderImagesList("chatImages", "chatImagesList"));
+            chatImagesEl.addEventListener("change", () => handleImagePick("chatImages", "chatImagesList"));
           }
           const promptImagesEl = $("promptImages");
           if (promptImagesEl) {
-            promptImagesEl.addEventListener("change", () => renderImagesList("promptImages", "promptImagesList"));
+            promptImagesEl.addEventListener("change", () => handleImagePick("promptImages", "promptImagesList"));
           }
           const videoPartsEl = $("videoParts");
           if (videoPartsEl) {
@@ -1959,6 +2092,7 @@
             const isCustom = cmdPresetEl.value === "custom";
             const isCodex = cmdPresetEl.value === "codex";
             const isGemini = cmdPresetEl.value === "gemini";
+            const isAgent = cmdPresetEl.value === "agent";
             cmdCustomEl.style.display = isCustom ? "block" : "none";
             codexModelRowEl.style.display = isCodex ? "block" : "none";
             codexSessionRowEl.style.display = isCodex ? "block" : "none";
@@ -1991,6 +2125,9 @@
           }
           if (geminiModelPresetEl) {
             geminiModelPresetEl.addEventListener("change", updateGeminiModelPreset);
+          }
+          if ($("compressImages")) {
+            $("compressImages").addEventListener("change", () => saveSettings(captureSettings()));
           }
           if (codexNewTopicEl && codexSessionModeEl) {
             codexNewTopicEl.addEventListener("click", () => {

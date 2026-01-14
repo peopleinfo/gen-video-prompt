@@ -660,7 +660,9 @@ async function main(): Promise<void> {
                 ? buildCodexArgs(codexModel, codexSession, uploadedFiles)
                 : command === "gemini"
                   ? buildGeminiArgs(geminiModel)
-                  : [];
+                  : command === "agent"
+                    ? []
+                    : [];
 
             const out = await runCommandLlm({
               command,
@@ -858,7 +860,9 @@ async function main(): Promise<void> {
                 ? buildCodexArgs(codexModel, codexSession, uploadedFiles)
                 : command === "gemini"
                   ? buildGeminiArgs(geminiModel)
-                  : [];
+                  : command === "agent"
+                    ? []
+                    : [];
 
             const out = await runCommandLlm({ command, args: effectiveArgs, input: prompt });
             json(res, 200, { ok: true, mode: "chat", text: out });
