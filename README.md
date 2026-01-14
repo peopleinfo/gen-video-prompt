@@ -210,3 +210,7 @@ This reads the local docs and prints a short excerpt from a matching file.
 ## Useful links
 
 - [Copy Prompts](https://docsbot.ai/prompts/creative)
+
+## Todo
+
+<https://github.com/cheahjs/free-llm-api-resources>

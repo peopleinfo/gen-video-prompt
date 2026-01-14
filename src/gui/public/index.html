@@ -77,6 +77,35 @@
         color: var(--text);
         outline: none;
       }
+      .input-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+      .input-wrapper input {
+        padding-right: 40px;
+      }
+      .input-icon {
+        position: absolute;
+        right: 10px;
+        cursor: pointer;
+        color: var(--muted);
+        background: none;
+        border: none;
+        padding: 4px;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: color 0.2s;
+      }
+      .input-icon:hover {
+        color: var(--text);
+      }
+      .input-icon svg {
+        width: 18px;
+        height: 18px;
+      }
       textarea {
         min-height: 120px;
         resize: vertical;
@@ -221,7 +250,7 @@
 
           <div id="providerPuter" style="display: none">
             <label for="puterModel">Model</label>
-            <input id="puterModel" placeholder="e.g. gpt-5-nano" />
+            <input id="puterModel" placeholder="e.g. gemini-3-flash-preview" />
             <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
               Powered by Puter.js. No API key required when running in Puter environment.
             </div>
@@ -306,7 +335,15 @@
             <label for="openaiModel">Model</label>
             <input id="openaiModel" placeholder="e.g. gpt-4o-mini" />
             <label for="openaiApiKey">API key</label>
-            <input id="openaiApiKey" placeholder="sk-..." />
+            <div class="input-wrapper">
+              <input id="openaiApiKey" type="password" placeholder="sk-..." />
+              <button type="button" class="input-icon" id="toggleOpenaiApiKey" title="Toggle visibility">
+                <svg id="eyeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
             <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
               Enable by starting GUI with <code>ENABLE_HTTP_LLM=1</code>. API key is stored in your browser localStorage.
             </div>
@@ -547,6 +584,25 @@
       $("tab-prompts").addEventListener("click", () => setTab("prompts"));
       $("tab-docs").addEventListener("click", () => setTab("docs"));
       $("tab-tools").addEventListener("click", () => setTab("tools"));
+      
+      // Toggle API Key visibility
+      $("toggleOpenaiApiKey").addEventListener("click", () => {
+        const input = $("openaiApiKey");
+        const icon = $("eyeIcon");
+        if (input.type === "password") {
+          input.type = "text";
+          icon.innerHTML = `
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+            <line x1="1" y1="1" x2="23" y2="23"></line>
+          `;
+        } else {
+          input.type = "password";
+          icon.innerHTML = `
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          `;
+        }
+      });
 
       function setOutputTab(active) {
         const views = ["output", "preview", "video"];
@@ -1571,7 +1627,7 @@
             api_key: $("openaiApiKey").value || "",
           },
           puter: {
-            model: $("puterModel").value || "gpt-5-nano",
+            model: $("puterModel").value || "gemini-3-flash-preview",
           },
         };
       }
