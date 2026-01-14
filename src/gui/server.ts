@@ -1,9 +1,9 @@
+import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
-import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -24,7 +24,11 @@ const PUBLIC_DIR = path.join(ROOT_DIR, "src", "gui", "public");
 const MCP_SERVER_PATH = path.join(ROOT_DIR, "dist", "server.js");
 const MCP_SERVER_SRC_PATH = path.join(ROOT_DIR, "src", "server.ts");
 
-function json(res: http.ServerResponse, statusCode: number, payload: JsonRecord): void {
+function json(
+  res: http.ServerResponse,
+  statusCode: number,
+  payload: JsonRecord
+): void {
   const body = JSON.stringify(payload, null, 2);
   res.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
@@ -33,7 +37,11 @@ function json(res: http.ServerResponse, statusCode: number, payload: JsonRecord)
   res.end(body);
 }
 
-function text(res: http.ServerResponse, statusCode: number, body: string): void {
+function text(
+  res: http.ServerResponse,
+  statusCode: number,
+  body: string
+): void {
   res.writeHead(statusCode, {
     "content-type": "text/plain; charset=utf-8",
     "cache-control": "no-store",
@@ -45,7 +53,10 @@ function notFound(res: http.ServerResponse): void {
   text(res, 404, "Not found");
 }
 
-async function readRequestBody(req: http.IncomingMessage, limitBytes = 1_000_000): Promise<string> {
+async function readRequestBody(
+  req: http.IncomingMessage,
+  limitBytes = 1_000_000
+): Promise<string> {
   return await new Promise((resolve, reject) => {
     let size = 0;
     const chunks: Buffer[] = [];
@@ -63,7 +74,10 @@ async function readRequestBody(req: http.IncomingMessage, limitBytes = 1_000_000
   });
 }
 
-async function readJson(req: http.IncomingMessage, limitBytes = 1_000_000): Promise<JsonRecord> {
+async function readJson(
+  req: http.IncomingMessage,
+  limitBytes = 1_000_000
+): Promise<JsonRecord> {
   const raw = await readRequestBody(req, limitBytes);
   if (!raw.trim()) return {};
   const parsed = JSON.parse(raw) as unknown;
@@ -96,8 +110,10 @@ function normalizePromptMode(raw: string): string | undefined {
   if (!cleaned) return undefined;
   if (cleaned === "auto") return "auto";
   if (cleaned === "story" || cleaned === "storytelling") return "story";
-  if (cleaned === "meme" || cleaned === "funny" || cleaned === "viral") return "meme";
-  if (cleaned === "documentary" || cleaned === "doc" || cleaned === "docu") return "documentary";
+  if (cleaned === "meme" || cleaned === "funny" || cleaned === "viral")
+    return "meme";
+  if (cleaned === "documentary" || cleaned === "doc" || cleaned === "docu")
+    return "documentary";
   if (cleaned === "history" || cleaned === "historical") return "history";
   return undefined;
 }
@@ -106,7 +122,10 @@ function safePathJoin(baseDir: string, urlPathname: string): string | null {
   const decoded = decodeURIComponent(urlPathname);
   const rel = decoded.replace(/^\/+/, "");
   const abs = path.resolve(baseDir, rel);
-  if (!abs.startsWith(path.resolve(baseDir) + path.sep) && abs !== path.resolve(baseDir)) {
+  if (
+    !abs.startsWith(path.resolve(baseDir) + path.sep) &&
+    abs !== path.resolve(baseDir)
+  ) {
     return null;
   }
   return abs;
@@ -136,7 +155,9 @@ function createMcpClient(): {
 } {
   const transport = new StdioClientTransport({
     command: "node",
-    args: MCP_SERVER_DEV ? ["--loader", "tsx", MCP_SERVER_SRC_PATH] : [MCP_SERVER_PATH],
+    args: MCP_SERVER_DEV
+      ? ["--loader", "tsx", MCP_SERVER_SRC_PATH]
+      : [MCP_SERVER_PATH],
     cwd: ROOT_DIR,
     stderr: "inherit",
   });
@@ -260,7 +281,8 @@ async function runFfmpeg(args: string[], timeoutMs = 120_000): Promise<void> {
 
     child.on("error", (err) => {
       clearTimeout(killTimer);
-      const code = err && typeof err === "object" && "code" in err ? String(err.code) : "";
+      const code =
+        err && typeof err === "object" && "code" in err ? String(err.code) : "";
       if (code === "ENOENT") {
         reject(
           new Error(
@@ -276,7 +298,13 @@ async function runFfmpeg(args: string[], timeoutMs = 120_000): Promise<void> {
       clearTimeout(killTimer);
       if (code !== 0) {
         const signalInfo = signal ? `, signal ${signal}` : "";
-        reject(new Error(`ffmpeg failed${signalInfo}: ${stderr.toString("utf8") || "no stderr"}`));
+        reject(
+          new Error(
+            `ffmpeg failed${signalInfo}: ${
+              stderr.toString("utf8") || "no stderr"
+            }`
+          )
+        );
         return;
       }
       resolve();
@@ -384,7 +412,10 @@ async function runOpenAiCompatible(params: {
   timeoutMs?: number;
 }): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), params.timeoutMs ?? 60_000);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    params.timeoutMs ?? 60_000
+  );
   try {
     const base = params.baseUrl.replace(/\/+$/, "");
     const url = `${base}/v1/chat/completions`;
@@ -417,7 +448,9 @@ async function runOpenAiCompatible(params: {
     const json = JSON.parse(text) as any;
     const content = json?.choices?.[0]?.message?.content;
     if (typeof content !== "string" || !content.trim()) {
-      throw new Error("OpenAI-compatible response missing choices[0].message.content");
+      throw new Error(
+        "OpenAI-compatible response missing choices[0].message.content"
+      );
     }
     return content.trim();
   } finally {
@@ -432,7 +465,10 @@ async function runOllama(params: {
   timeoutMs?: number;
 }): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), params.timeoutMs ?? 60_000);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    params.timeoutMs ?? 60_000
+  );
   try {
     const base = params.baseUrl.replace(/\/+$/, "");
     const url = `${base}/api/generate`;
@@ -467,12 +503,17 @@ async function main(): Promise<void> {
   try {
     await fs.stat(MCP_SERVER_PATH);
   } catch {
-    throw new Error(`Missing built MCP server at ${MCP_SERVER_PATH}. Run: npm run build`);
+    throw new Error(
+      `Missing built MCP server at ${MCP_SERVER_PATH}. Run: npm run build`
+    );
   }
 
   const mcp = createMcpClient();
 
-  const requestHandler = async (req: http.IncomingMessage, res: http.ServerResponse) => {
+  const requestHandler = async (
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+  ) => {
     try {
       const method = req.method ?? "GET";
       const scheme = USE_HTTPS ? "https" : "http";
@@ -529,15 +570,23 @@ async function main(): Promise<void> {
           Number.isFinite(totalSeconds) &&
           partSeconds >= totalSeconds
         ) {
-          json(res, 400, { ok: false, error: "Part length must be less than total duration." });
+          json(res, 400, {
+            ok: false,
+            error: "Part length must be less than total duration.",
+          });
           return;
         }
         const rawImages = Array.isArray(body.images) ? body.images : [];
-        const images = rawImages.filter((img) => img && typeof img === "object") as JsonRecord[];
+        const images = rawImages.filter(
+          (img) => img && typeof img === "object"
+        ) as JsonRecord[];
         const uploadedFiles: string[] = [];
 
         if (images.length > 0 && provider !== "command") {
-          json(res, 400, { ok: false, error: "Images are only supported with Codex CLI." });
+          json(res, 400, {
+            ok: false,
+            error: "Images are only supported with Codex CLI.",
+          });
           return;
         }
 
@@ -547,17 +596,31 @@ async function main(): Promise<void> {
             arguments: {
               story,
               ...(mode ? { mode } : {}),
-              ...(asString(body.duration_seconds) ? { duration_seconds: asString(body.duration_seconds)! } : {}),
+              ...(asString(body.duration_seconds)
+                ? { duration_seconds: asString(body.duration_seconds)! }
+                : {}),
               ...(asString(body.part_length_seconds)
                 ? { part_length_seconds: asString(body.part_length_seconds)! }
                 : {}),
-              ...(asString(body.resolution) ? { resolution: asString(body.resolution)! } : {}),
-              ...(asString(body.aspect_ratio) ? { aspect_ratio: asString(body.aspect_ratio)! } : {}),
+              ...(asString(body.resolution)
+                ? { resolution: asString(body.resolution)! }
+                : {}),
+              ...(asString(body.aspect_ratio)
+                ? { aspect_ratio: asString(body.aspect_ratio)! }
+                : {}),
               ...(asString(body.style) ? { style: asString(body.style)! } : {}),
-              ...(asString(body.camera) ? { camera: asString(body.camera)! } : {}),
-              ...(asString(body.lighting) ? { lighting: asString(body.lighting)! } : {}),
-              ...(asString(body.quality) ? { quality: asString(body.quality)! } : {}),
-              ...(asString(body.action_beats) ? { action_beats: asString(body.action_beats)! } : {}),
+              ...(asString(body.camera)
+                ? { camera: asString(body.camera)! }
+                : {}),
+              ...(asString(body.lighting)
+                ? { lighting: asString(body.lighting)! }
+                : {}),
+              ...(asString(body.quality)
+                ? { quality: asString(body.quality)! }
+                : {}),
+              ...(asString(body.action_beats)
+                ? { action_beats: asString(body.action_beats)! }
+                : {}),
               ...(asString(body.audio) ? { audio: asString(body.audio)! } : {}),
             },
           })
@@ -565,9 +628,14 @@ async function main(): Promise<void> {
 
         const first = (promptTemplate as any)?.messages?.[0]?.content;
         const templateText =
-          first && first.type === "text" && typeof first.text === "string" ? first.text : "";
+          first && first.type === "text" && typeof first.text === "string"
+            ? first.text
+            : "";
         if (!templateText) {
-          json(res, 500, { ok: false, error: "Failed to build prompt template" });
+          json(res, 500, {
+            ok: false,
+            error: "Failed to build prompt template",
+          });
           return;
         }
 
@@ -610,17 +678,28 @@ async function main(): Promise<void> {
           }
 
           const command = asString(body.command) ?? "";
-          const args = Array.isArray(body.args) ? body.args.filter((v) => typeof v === "string") : [];
+          const args = Array.isArray(body.args)
+            ? body.args.filter((v) => typeof v === "string")
+            : [];
           if (!command) {
-            json(res, 400, { ok: false, error: "Missing command for provider=command" });
+            json(res, 400, {
+              ok: false,
+              error: "Missing command for provider=command",
+            });
             return;
           }
           if (args.length > 0) {
-            json(res, 400, { ok: false, error: "Args are disabled for security." });
+            json(res, 400, {
+              ok: false,
+              error: "Args are disabled for security.",
+            });
             return;
           }
           if (images.length > 0 && command !== "codex") {
-            json(res, 400, { ok: false, error: "Images are only supported with Codex CLI." });
+            json(res, 400, {
+              ok: false,
+              error: "Images are only supported with Codex CLI.",
+            });
             return;
           }
 
@@ -640,12 +719,15 @@ async function main(): Promise<void> {
                 const buffer = Buffer.from(data, "base64");
                 totalBytes += buffer.length;
                 if (totalBytes > maxBytes) {
-                  json(res, 400, { ok: false, error: "Total image size exceeds 10MB." });
+                  json(res, 400, {
+                    ok: false,
+                    error: "Total image size exceeds 10MB.",
+                  });
                   return;
                 }
-                const filename = `prompt-${Date.now()}-${Math.random().toString(16).slice(2)}${extensionForMime(
-                  mime
-                )}`;
+                const filename = `prompt-${Date.now()}-${Math.random()
+                  .toString(16)
+                  .slice(2)}${extensionForMime(mime)}`;
                 const filePath = path.join(uploadDir, filename);
                 await fs.writeFile(filePath, buffer);
                 uploadedFiles.push(filePath);
@@ -659,10 +741,10 @@ async function main(): Promise<void> {
               command === "codex"
                 ? buildCodexArgs(codexModel, codexSession, uploadedFiles)
                 : command === "gemini"
-                  ? buildGeminiArgs(geminiModel)
-                  : command === "agent"
-                    ? []
-                    : [];
+                ? buildGeminiArgs(geminiModel)
+                : command === "agent"
+                ? []
+                : [];
 
             const out = await runCommandLlm({
               command,
@@ -673,7 +755,11 @@ async function main(): Promise<void> {
             json(res, 200, { ok: true, mode: "generated", text: out });
             return;
           } finally {
-            await Promise.all(uploadedFiles.map((file) => fs.unlink(file).catch(() => undefined)));
+            await Promise.all(
+              uploadedFiles.map((file) =>
+                fs.unlink(file).catch(() => undefined)
+              )
+            );
           }
         }
 
@@ -689,7 +775,10 @@ async function main(): Promise<void> {
           const baseUrl = asString(body.base_url) ?? "http://127.0.0.1:11434";
           const model = asString(body.model) ?? "";
           if (!model) {
-            json(res, 400, { ok: false, error: "Missing model for provider=ollama" });
+            json(res, 400, {
+              ok: false,
+              error: "Missing model for provider=ollama",
+            });
             return;
           }
           const out = await runOllama({ baseUrl, model, prompt: instruction });
@@ -710,15 +799,35 @@ async function main(): Promise<void> {
           const model = asString(body.model) ?? "";
           const apiKey = asString(body.api_key);
           if (!baseUrl) {
-            json(res, 400, { ok: false, error: "Missing base_url for provider=openai_compatible" });
+            json(res, 400, {
+              ok: false,
+              error: "Missing base_url for provider=openai_compatible",
+            });
             return;
           }
           if (!model) {
-            json(res, 400, { ok: false, error: "Missing model for provider=openai_compatible" });
+            json(res, 400, {
+              ok: false,
+              error: "Missing model for provider=openai_compatible",
+            });
             return;
           }
-          const out = await runOpenAiCompatible({ baseUrl, model, apiKey, prompt: instruction });
+          const out = await runOpenAiCompatible({
+            baseUrl,
+            model,
+            apiKey,
+            prompt: instruction,
+          });
           json(res, 200, { ok: true, mode: "generated", text: out });
+          return;
+        }
+
+        if (provider === "puter") {
+          json(res, 400, {
+            ok: false,
+            error:
+              "Puter.js provider must be handled on the client side. Check your GUI configuration.",
+          });
           return;
         }
 
@@ -733,7 +842,9 @@ async function main(): Promise<void> {
           json(res, 400, { ok: false, error: "No video files provided." });
           return;
         }
-        const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "gen-video-merge-"));
+        const tmpDir = await fs.mkdtemp(
+          path.join(os.tmpdir(), "gen-video-merge-")
+        );
         const filePaths: string[] = [];
         try {
           for (let index = 0; index < rawFiles.length; index += 1) {
@@ -745,9 +856,14 @@ async function main(): Promise<void> {
               json(res, 400, { ok: false, error: `Missing data for ${name}.` });
               return;
             }
-            const baseName = sanitizeFileName(path.parse(name).name || `part-${index + 1}`);
+            const baseName = sanitizeFileName(
+              path.parse(name).name || `part-${index + 1}`
+            );
             const ext = extensionForVideoMime(type);
-            const fileName = `${String(index + 1).padStart(2, "0")}-${baseName}${ext}`;
+            const fileName = `${String(index + 1).padStart(
+              2,
+              "0"
+            )}-${baseName}${ext}`;
             const filePath = path.join(tmpDir, fileName);
             const buffer = Buffer.from(stripDataUrl(data), "base64");
             await fs.writeFile(filePath, buffer);
@@ -755,11 +871,24 @@ async function main(): Promise<void> {
           }
 
           const listPath = path.join(tmpDir, "inputs.txt");
-          const listBody = filePaths.map((p) => `file '${escapeConcatPath(p)}'`).join("\n");
+          const listBody = filePaths
+            .map((p) => `file '${escapeConcatPath(p)}'`)
+            .join("\n");
           await fs.writeFile(listPath, listBody);
 
           const outputPath = path.join(tmpDir, "merged.mp4");
-          await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", outputPath]);
+          await runFfmpeg([
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            listPath,
+            "-c",
+            "copy",
+            outputPath,
+          ]);
           const merged = await fs.readFile(outputPath);
           json(res, 200, {
             ok: true,
@@ -785,16 +914,24 @@ async function main(): Promise<void> {
 
         const provider = asString(body.provider) ?? "none";
         const rawImages = Array.isArray(body.images) ? body.images : [];
-        const images = rawImages.filter((img) => img && typeof img === "object") as JsonRecord[];
+        const images = rawImages.filter(
+          (img) => img && typeof img === "object"
+        ) as JsonRecord[];
         const uploadedFiles: string[] = [];
 
         if (provider === "none") {
-          json(res, 400, { ok: false, error: "Provider is set to template only" });
+          json(res, 400, {
+            ok: false,
+            error: "Provider is set to template only",
+          });
           return;
         }
 
         if (images.length > 0 && provider !== "command") {
-          json(res, 400, { ok: false, error: "Images are only supported with Codex CLI." });
+          json(res, 400, {
+            ok: false,
+            error: "Images are only supported with Codex CLI.",
+          });
           return;
         }
 
@@ -809,18 +946,29 @@ async function main(): Promise<void> {
           }
 
           const command = asString(body.command) ?? "";
-          const args = Array.isArray(body.args) ? body.args.filter((v) => typeof v === "string") : [];
+          const args = Array.isArray(body.args)
+            ? body.args.filter((v) => typeof v === "string")
+            : [];
           if (!command) {
-            json(res, 400, { ok: false, error: "Missing command for provider=command" });
+            json(res, 400, {
+              ok: false,
+              error: "Missing command for provider=command",
+            });
             return;
           }
           if (args.length > 0) {
-            json(res, 400, { ok: false, error: "Args are disabled for security." });
+            json(res, 400, {
+              ok: false,
+              error: "Args are disabled for security.",
+            });
             return;
           }
 
           if (images.length > 0 && command !== "codex") {
-            json(res, 400, { ok: false, error: "Images are only supported with Codex CLI." });
+            json(res, 400, {
+              ok: false,
+              error: "Images are only supported with Codex CLI.",
+            });
             return;
           }
 
@@ -840,12 +988,15 @@ async function main(): Promise<void> {
                 const buffer = Buffer.from(data, "base64");
                 totalBytes += buffer.length;
                 if (totalBytes > maxBytes) {
-                  json(res, 400, { ok: false, error: "Total image size exceeds 10MB." });
+                  json(res, 400, {
+                    ok: false,
+                    error: "Total image size exceeds 10MB.",
+                  });
                   return;
                 }
-                const filename = `chat-${Date.now()}-${Math.random().toString(16).slice(2)}${extensionForMime(
-                  mime
-                )}`;
+                const filename = `chat-${Date.now()}-${Math.random()
+                  .toString(16)
+                  .slice(2)}${extensionForMime(mime)}`;
                 const filePath = path.join(uploadDir, filename);
                 await fs.writeFile(filePath, buffer);
                 uploadedFiles.push(filePath);
@@ -859,16 +1010,24 @@ async function main(): Promise<void> {
               command === "codex"
                 ? buildCodexArgs(codexModel, codexSession, uploadedFiles)
                 : command === "gemini"
-                  ? buildGeminiArgs(geminiModel)
-                  : command === "agent"
-                    ? []
-                    : [];
+                ? buildGeminiArgs(geminiModel)
+                : command === "agent"
+                ? []
+                : [];
 
-            const out = await runCommandLlm({ command, args: effectiveArgs, input: prompt });
+            const out = await runCommandLlm({
+              command,
+              args: effectiveArgs,
+              input: prompt,
+            });
             json(res, 200, { ok: true, mode: "chat", text: out });
             return;
           } finally {
-            await Promise.all(uploadedFiles.map((file) => fs.unlink(file).catch(() => undefined)));
+            await Promise.all(
+              uploadedFiles.map((file) =>
+                fs.unlink(file).catch(() => undefined)
+              )
+            );
           }
         }
 
@@ -885,11 +1044,17 @@ async function main(): Promise<void> {
           const baseUrl = asString(ollama.base_url) ?? "";
           const model = asString(ollama.model) ?? "";
           if (!baseUrl) {
-            json(res, 400, { ok: false, error: "Missing base_url for provider=ollama" });
+            json(res, 400, {
+              ok: false,
+              error: "Missing base_url for provider=ollama",
+            });
             return;
           }
           if (!model) {
-            json(res, 400, { ok: false, error: "Missing model for provider=ollama" });
+            json(res, 400, {
+              ok: false,
+              error: "Missing model for provider=ollama",
+            });
             return;
           }
           const out = await runOllama({ baseUrl, model, prompt });
@@ -911,15 +1076,35 @@ async function main(): Promise<void> {
           const model = asString(openai.model) ?? "";
           const apiKey = asString(openai.api_key);
           if (!baseUrl) {
-            json(res, 400, { ok: false, error: "Missing base_url for provider=openai_compatible" });
+            json(res, 400, {
+              ok: false,
+              error: "Missing base_url for provider=openai_compatible",
+            });
             return;
           }
           if (!model) {
-            json(res, 400, { ok: false, error: "Missing model for provider=openai_compatible" });
+            json(res, 400, {
+              ok: false,
+              error: "Missing model for provider=openai_compatible",
+            });
             return;
           }
-          const out = await runOpenAiCompatible({ baseUrl, model, apiKey, prompt });
+          const out = await runOpenAiCompatible({
+            baseUrl,
+            model,
+            apiKey,
+            prompt,
+          });
           json(res, 200, { ok: true, mode: "chat", text: out });
+          return;
+        }
+
+        if (provider === "puter") {
+          json(res, 400, {
+            ok: false,
+            error:
+              "Puter.js provider must be handled on the client side. Check your GUI configuration.",
+          });
           return;
         }
 
@@ -978,17 +1163,25 @@ async function main(): Promise<void> {
       }
 
       const content = await fs.readFile(filePath);
-      res.writeHead(200, { "content-type": contentTypeFor(filePath), "cache-control": "no-store" });
+      res.writeHead(200, {
+        "content-type": contentTypeFor(filePath),
+        "cache-control": "no-store",
+      });
       res.end(content);
     } catch (error) {
-      json(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   };
 
   let server: http.Server | https.Server;
   if (USE_HTTPS) {
     if (!SSL_KEY_PATH || !SSL_CERT_PATH) {
-      throw new Error("HTTPS=1 requires SSL_KEY and SSL_CERT environment variables.");
+      throw new Error(
+        "HTTPS=1 requires SSL_KEY and SSL_CERT environment variables."
+      );
     }
     const [key, cert] = await Promise.all([
       fs.readFile(SSL_KEY_PATH),
@@ -1014,11 +1207,16 @@ async function main(): Promise<void> {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String(error.code)
+        : "";
     if (code === "EPERM") {
       throw new Error(
         [
-          `Cannot listen on ${USE_HTTPS ? "https" : "http"}://${HOST}:${PORT} (EPERM).`,
+          `Cannot listen on ${
+            USE_HTTPS ? "https" : "http"
+          }://${HOST}:${PORT} (EPERM).`,
           "This usually means your environment blocks binding to local TCP ports (sandbox/restrictions).",
           "Try running from a normal terminal session, or pick a different port:",
           "  PORT=8080 npm run gui",
@@ -1028,14 +1226,20 @@ async function main(): Promise<void> {
       );
     }
     throw new Error(
-      `Failed to start GUI server on ${USE_HTTPS ? "https" : "http"}://${HOST}:${PORT}: ${message}`
+      `Failed to start GUI server on ${
+        USE_HTTPS ? "https" : "http"
+      }://${HOST}:${PORT}: ${message}`
     );
   }
   // eslint-disable-next-line no-console
   const address = server.address();
   const boundPort =
-    address && typeof address === "object" && "port" in address ? Number(address.port) : PORT;
-  console.log(`GUI running: ${USE_HTTPS ? "https" : "http"}://${HOST}:${boundPort}`);
+    address && typeof address === "object" && "port" in address
+      ? Number(address.port)
+      : PORT;
+  console.log(
+    `GUI running: ${USE_HTTPS ? "https" : "http"}://${HOST}:${boundPort}`
+  );
 }
 
 main().catch((error) => {

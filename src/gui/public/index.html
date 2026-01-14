@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>gen-video-prompt GUI</title>
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/compressorjs@1.2.1/dist/compressor.min.js"></script>
+    <script src="https://js.puter.com/v2/"></script>
     <style>
       :root {
         color-scheme: light dark;
@@ -215,7 +216,16 @@
             <option value="command" selected>Local CLI</option>
             <option value="ollama">Ollama (HTTP)</option>
             <option value="openai_compatible">OpenAI-compatible API</option>
+            <option value="puter">Puter.js (Cloud)</option>
           </select>
+
+          <div id="providerPuter" style="display: none">
+            <label for="puterModel">Model</label>
+            <input id="puterModel" placeholder="e.g. gpt-5-nano" />
+            <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
+              Powered by Puter.js. No API key required when running in Puter environment.
+            </div>
+          </div>
 
           <div id="providerCommand" style="display: none">
             <label for="commandPreset">CLI</label>
@@ -1560,6 +1570,9 @@
             model: $("openaiModel").value || "",
             api_key: $("openaiApiKey").value || "",
           },
+          puter: {
+            model: $("puterModel").value || "gpt-5-nano",
+          },
         };
       }
 
@@ -1632,6 +1645,7 @@
         set("openaiBaseUrl", settings.openaiBaseUrl);
         set("openaiModel", settings.openaiModel);
         set("openaiApiKey", settings.openaiApiKey);
+        set("puterModel", settings.puterModel);
         const compressEl = $("compressImages");
         if (compressEl) {
           compressEl.checked = settings.compressImages === true;
@@ -1654,6 +1668,7 @@
           openaiBaseUrl: $("openaiBaseUrl").value || "",
           openaiModel: $("openaiModel").value || "",
           openaiApiKey: $("openaiApiKey").value || "",
+          puterModel: $("puterModel").value || "",
           compressImages: $("compressImages") ? $("compressImages").checked : false,
         };
       }
@@ -1843,6 +1858,22 @@
 
           saveSettings(captureSettings());
 
+          if (provider === "puter") {
+            const config = collectLlmConfig();
+            const systemPrompt = "You are a video prompt engineer. Follow the user instructions precisely.";
+            const fullPrompt = `${systemPrompt}\n\n${storyWithImages}`;
+            
+            const text = await callLlm(fullPrompt, (chunk) => {
+              // Optionally update UI with streaming chunks if desired
+            });
+            
+            const data = { ok: true, text };
+            setOutput(data.text);
+            saveActiveWorkspaceOutput(data.text);
+            $("status").textContent = "Done.";
+            return;
+          }
+
           const data = await api("/api/generate", {
             method: "POST",
             body: JSON.stringify(payload),
@@ -1955,6 +1986,50 @@
         }
       });
 
+      async function callLlm(prompt, onPart) {
+        const config = collectLlmConfig();
+        if (config.provider === "puter") {
+          try {
+            const response = await puter.ai.chat(prompt, {
+              model: config.puter.model,
+              stream: true,
+            });
+            let fullText = "";
+            for await (const part of response) {
+              if (part?.text) {
+                fullText += part.text;
+                if (onPart) onPart(part.text);
+              }
+            }
+            return fullText;
+          } catch (err) {
+            console.error("Puter.js error:", err);
+            throw err;
+          }
+        }
+
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, config }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to call LLM");
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value);
+          fullText += chunk;
+          if (onPart) onPart(chunk);
+        }
+        return fullText;
+      }
+
       $("btnConnect").addEventListener("click", async () => {
         const btn = $("btnConnect");
         if (llmConnected) {
@@ -1975,10 +2050,16 @@
             updateLlmTabs();
             return;
           }
-          await api("/api/chat", {
-            method: "POST",
-            body: JSON.stringify({ prompt: "Reply with OK.", ...config }),
-          });
+          if (config.provider === "puter") {
+            await puter.ai.chat("Reply with OK.", {
+              model: config.puter.model,
+            });
+          } else {
+            await api("/api/chat", {
+              method: "POST",
+              body: JSON.stringify({ prompt: "Reply with OK.", ...config }),
+            });
+          }
           llmConnected = true;
           setLlmStatus("Connected.");
         } catch (e) {
@@ -1998,13 +2079,18 @@
             setOutput("Enter a message first.", true);
             return;
           }
-          setOutput("Sending...");
-          const images = await readImages("chatImages");
-          const data = await api("/api/chat", {
-            method: "POST",
-            body: JSON.stringify({ prompt, images, ...collectLlmConfig() }),
+          showOutputLoading("Sending...");
+          const text = await callLlm(prompt, (part) => {
+            setOutput(text + part, false, true); // This is simplified, usually we accumulate
           });
-          setOutput(data && data.text ? data.text : "(empty response)");
+          // Better version that accumulates properly:
+          let fullText = "";
+          setOutput("Sending...", false, true);
+          await callLlm(prompt, (part) => {
+            fullText += part;
+            setOutput(fullText, false, true);
+          });
+          setOutput(fullText || "(empty response)");
         } catch (e) {
           setOutput(e && e.message ? e.message : String(e), true);
         }
@@ -2110,12 +2196,13 @@
             codexModelCustomEl.style.display = codexModelPresetEl.value === "custom" ? "block" : "none";
           };
           const updateProvider = () => {
-            cmdEl.style.display = providerEl.value === "command" ? "block" : "none";
-            ollamaEl.style.display = providerEl.value === "ollama" ? "block" : "none";
-            openaiEl.style.display = providerEl.value === "openai_compatible" ? "block" : "none";
-            llmConnected = false;
-            updateLlmTabs();
-          };
+    cmdEl.style.display = providerEl.value === "command" ? "block" : "none";
+    ollamaEl.style.display = providerEl.value === "ollama" ? "block" : "none";
+    openaiEl.style.display = providerEl.value === "openai_compatible" ? "block" : "none";
+    $("providerPuter").style.display = providerEl.value === "puter" ? "block" : "none";
+    llmConnected = false;
+    updateLlmTabs();
+  };
           providerEl.addEventListener("change", updateProvider);
           if (cmdPresetEl) {
             cmdPresetEl.addEventListener("change", updateCommandPreset);
