@@ -31,6 +31,7 @@
             <option value="command">Local CLI</option>
             <option value="ollama">Ollama (HTTP)</option>
             <option value="openai_compatible">OpenAI-compatible API</option>
+            <option value="gpt4free">GPT4Free (G4F)</option>
             <option value="image_gen" selected>Antigravity Tools</option>
             <option value="puter">Puter.js (Cloud)</option>
           </select>
@@ -82,6 +83,7 @@
             <select id="commandPreset">
               <option value="codex" selected>Codex CLI</option>
               <option value="gemini">Gemini CLI</option>
+              <option value="copilot">Copilot CLI</option>
               <option value="agent">Cursor Agent</option>
               <option value="custom">Other CLI</option>
             </select>
@@ -129,6 +131,12 @@
               </div>
             </div>
 
+            <div id="copilotModelRow" style="margin-top: 10px; display: none">
+              <div style="font-size: 12px; color: var(--muted)">
+                Uses the new <code>copilot</code> CLI. Install with <code>npm install -g @github/copilot</code> and run <code>copilot /login</code>.
+              </div>
+            </div>
+
             <div id="commandCustom" style="display: none">
               <label for="cmd">Command</label>
               <input id="cmd" placeholder="e.g. my-llm-cli" />
@@ -167,6 +175,14 @@
             </div>
             <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
               Enable by starting GUI with <code>ENABLE_HTTP_LLM=1</code>. API key is stored in your browser localStorage.
+            </div>
+          </div>
+
+          <div id="providerGpt4Free" style="display: none">
+            <label for="gpt4freeModel">Model</label>
+            <input id="gpt4freeModel" placeholder="e.g. deepseek, flux" />
+            <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
+              Powered by GPT4Free (g4f.dev). Supports text and image generation.
             </div>
           </div>
 

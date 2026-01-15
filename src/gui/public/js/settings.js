@@ -1,4 +1,4 @@
-import { $ } from './utils.js';
+import { $ } from "./utils.js";
 
 export const SETTINGS_KEY = "gen-video-prompt.gui.settings.v1";
 
@@ -30,20 +30,37 @@ export function applySettings(settings) {
   set(
     "commandPreset",
     settings.commandPreset ||
-      (settings.cmd ? (settings.cmd === "codex" ? "codex" : settings.cmd === "gemini" ? "gemini" : "custom") : "codex")
+      (settings.cmd
+        ? settings.cmd === "codex"
+          ? "codex"
+          : settings.cmd === "gemini"
+          ? "gemini"
+          : settings.cmd === "copilot"
+          ? "copilot"
+          : "custom"
+        : "codex")
   );
-  const codexModel = typeof settings.codexModel === "string" ? settings.codexModel.trim() : "";
+  const codexModel =
+    typeof settings.codexModel === "string" ? settings.codexModel.trim() : "";
   const presetFromModel = codexModel
-    ? ["gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini", "gpt-5.2"].includes(codexModel)
+    ? [
+        "gpt-5.2-codex",
+        "gpt-5.1-codex-max",
+        "gpt-5.1-codex-mini",
+        "gpt-5.2",
+      ].includes(codexModel)
       ? codexModel
       : "custom"
     : "";
   set("codexModelPreset", settings.codexModelPreset || presetFromModel);
   set("codexModel", codexModel);
   set("codexSessionMode", settings.codexSessionMode || "new");
-  const geminiModel = typeof settings.geminiModel === "string" ? settings.geminiModel.trim() : "";
+  const geminiModel =
+    typeof settings.geminiModel === "string" ? settings.geminiModel.trim() : "";
   const geminiPresetFromModel = geminiModel
-    ? ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"].includes(geminiModel)
+    ? ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"].includes(
+        geminiModel
+      )
       ? geminiModel
       : "custom"
     : "";
@@ -62,6 +79,7 @@ export function applySettings(settings) {
   set("imageGenApiKey", settings.imageGenApiKey);
   set("imageGenSize", settings.imageGenSize);
   set("puterModel", settings.puterModel);
+  set("gpt4freeModel", settings.gpt4freeModel);
   const compressEl = $("compressImages");
   if (compressEl) {
     compressEl.checked = settings.compressImages === true;
@@ -90,6 +108,7 @@ export function captureSettings() {
     imageGenApiKey: $("imageGenApiKey").value || "",
     imageGenSize: $("imageGenSize").value || "1024x1024",
     puterModel: $("puterModel").value || "",
+    gpt4freeModel: $("gpt4freeModel").value || "",
     compressImages: $("compressImages") ? $("compressImages").checked : false,
   };
 }
@@ -98,6 +117,7 @@ export function getCommandValue() {
   const preset = $("commandPreset");
   if (preset && preset.value === "codex") return "codex";
   if (preset && preset.value === "gemini") return "gemini";
+  if (preset && preset.value === "copilot") return "copilot";
   if (preset && preset.value === "agent") return "agent";
   return $("cmd").value || "";
 }
@@ -152,10 +172,16 @@ export function collectLlmConfig() {
       base_url: $("imageGenBaseUrl").value || "",
       model: $("imageGenModel").value || "",
       api_key: $("imageGenApiKey").value || "",
-      size: $("imageGenType").value === "llm" ? undefined : ($("imageGenSize").value || "1024x1024"),
+      size:
+        $("imageGenType").value === "llm"
+          ? undefined
+          : $("imageGenSize").value || "1024x1024",
     },
     puter: {
       model: $("puterModel").value || "gemini-3-flash-preview",
+    },
+    gpt4free: {
+      model: $("gpt4freeModel").value || "deepseek",
     },
   };
 }

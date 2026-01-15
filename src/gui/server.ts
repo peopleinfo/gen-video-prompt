@@ -4,6 +4,11 @@ import http from "node:http";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
+// @ts-expect-error client.d.ts is not a module
+import G4FClient from "@gpt4free/g4f.dev";
+
+const g4f = new G4FClient();
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -200,7 +205,7 @@ function createMcpClient(): {
   const transport = new StdioClientTransport({
     command: "node",
     args: MCP_SERVER_DEV
-      ? ["--loader", "tsx", MCP_SERVER_SRC_PATH]
+      ? ["--import", "tsx", MCP_SERVER_SRC_PATH]
       : [MCP_SERVER_PATH],
     cwd: ROOT_DIR,
     stderr: "inherit",
@@ -262,6 +267,11 @@ function buildGeminiArgs(model: string | undefined): string[] {
     args.push("--model", model);
   }
   return args;
+}
+
+function buildCopilotArgs(): string[] {
+  // --no-auto-update to avoid EPERM on config.json
+  return ["-s", "--yolo", "--no-auto-update", "--prompt"];
 }
 
 function extensionForMime(mime: string): string {
@@ -788,14 +798,16 @@ async function main(): Promise<void> {
                 ? buildCodexArgs(codexModel, codexSession, uploadedFiles)
                 : command === "gemini"
                 ? buildGeminiArgs(geminiModel)
+                : command === "copilot"
+                ? [...buildCopilotArgs(), instruction]
                 : command === "agent"
                 ? []
                 : [];
 
             const out = await runCommandLlm({
-              command,
+              command: command === "copilot" ? "copilot" : command,
               args: effectiveArgs,
-              input: instruction,
+              input: command === "copilot" ? "" : instruction,
               timeoutMs: 120_000,
             });
             json(res, 200, { ok: true, mode: "generated", text: out });
@@ -916,6 +928,25 @@ async function main(): Promise<void> {
           return;
         }
 
+        if (provider === "gpt4free") {
+          const gpt4free = asObject(body.gpt4free);
+          const model = asString(gpt4free.model) || undefined;
+          try {
+            const response = await g4f.chat.completions.create({
+              model: model || "gpt-4o",
+              messages: [
+                { role: "system", content: "You are a helpful assistant." },
+                { role: "user", content: instruction },
+              ],
+            });
+            const out = response.choices[0]?.message?.content ?? "";
+            json(res, 200, { ok: true, mode: "generated", text: out });
+          } catch (err: any) {
+            json(res, 500, { ok: false, error: err.message });
+          }
+          return;
+        }
+
         json(res, 400, { ok: false, error: `Unknown provider: ${provider}` });
         return;
       }
@@ -998,10 +1029,25 @@ async function main(): Promise<void> {
         }
 
         const config = asObject(body.config);
+        const provider = asString(config.provider);
         const baseUrl = asString(config.base_url);
         const model = asString(config.model);
         const apiKey = asString(config.api_key);
         const size = asString(config.size) ?? "1024x1024";
+
+        if (provider === "gpt4free") {
+          try {
+            const response = await g4f.images.generate({
+              model: model || "flux-2-pro",
+              prompt,
+            });
+            const imageUrl = response.data[0]?.url || "";
+            json(res, 200, { ok: true, url: imageUrl });
+          } catch (err: any) {
+            json(res, 500, { ok: false, error: err.message });
+          }
+          return;
+        }
 
         if (!baseUrl) {
           json(res, 400, {
@@ -1146,12 +1192,14 @@ async function main(): Promise<void> {
                 ? buildCodexArgs(codexModel, codexSession, uploadedFiles)
                 : command === "gemini"
                 ? buildGeminiArgs(geminiModel)
+                : command === "copilot"
+                ? buildCopilotArgs()
                 : command === "agent"
                 ? []
                 : [];
 
             const out = await runCommandLlm({
-              command,
+              command: command === "copilot" ? "copilot" : command,
               args: effectiveArgs,
               input: prompt,
             });
@@ -1277,6 +1325,22 @@ async function main(): Promise<void> {
             error:
               "Puter.js provider must be handled on the client side. Check your GUI configuration.",
           });
+          return;
+        }
+
+        if (provider === "gpt4free") {
+          const gpt4free = asObject(body.gpt4free);
+          const model = asString(gpt4free.model) || undefined;
+          try {
+            const response = await g4f.chat.completions.create({
+              model: model || "gpt-4o",
+              messages: [{ role: "user", content: prompt }],
+            });
+            const out = response.choices[0]?.message?.content ?? "";
+            json(res, 200, { ok: true, mode: "chat", text: out });
+          } catch (err: any) {
+            json(res, 500, { ok: false, error: err.message });
+          }
           return;
         }
 

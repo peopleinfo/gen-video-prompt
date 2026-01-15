@@ -410,6 +410,11 @@ $("btnGenerate").addEventListener("click", async () => {
       payload.model = $("openaiModel").value || undefined;
       payload.api_key = $("openaiApiKey").value || undefined;
     }
+    if (provider === "gpt4free") {
+      payload.gpt4free = {
+        model: $("gpt4freeModel").value || undefined,
+      };
+    }
 
     saveSettings(captureSettings());
 
@@ -607,7 +612,11 @@ async function handleChatGenImage() {
 
     const config = collectLlmConfig();
     const imageConfig = config.image_gen;
-    const isLlm = imageConfig.type === "llm";
+    if (config.provider === "gpt4free") {
+      imageConfig.provider = "gpt4free";
+      imageConfig.model = config.gpt4free.model;
+    }
+    const isLlm = imageConfig.type === "llm" && config.provider !== "gpt4free";
 
     showOutputLoading(
       isLlm ? "Running Antigravity Chat..." : "Running Antigravity Tool...",
@@ -656,7 +665,11 @@ async function handlePromptGenImage() {
 
     const config = collectLlmConfig();
     const imageConfig = config.image_gen;
-    const isLlm = imageConfig.type === "llm";
+    if (config.provider === "gpt4free") {
+      imageConfig.provider = "gpt4free";
+      imageConfig.model = config.gpt4free.model;
+    }
+    const isLlm = imageConfig.type === "llm" && config.provider !== "gpt4free";
 
     showOutputLoading(
       isLlm
@@ -851,6 +864,7 @@ $("btnDownloadImage").addEventListener("click", () => {
     const geminiModelRowEl = $("geminiModelRow");
     const geminiModelPresetEl = $("geminiModelPreset");
     const geminiModelCustomEl = $("geminiModelCustom");
+    const copilotModelRowEl = $("copilotModelRow");
     const ollamaEl = $("providerOllama");
     const openaiEl = $("providerOpenAi");
 
@@ -866,10 +880,12 @@ $("btnDownloadImage").addEventListener("click", () => {
       const isCustom = cmdPresetEl.value === "custom";
       const isCodex = cmdPresetEl.value === "codex";
       const isGemini = cmdPresetEl.value === "gemini";
+      const isCopilot = cmdPresetEl.value === "copilot";
       cmdCustomEl.style.display = isCustom ? "block" : "none";
       codexModelRowEl.style.display = isCodex ? "block" : "none";
       codexSessionRowEl.style.display = isCodex ? "block" : "none";
       geminiModelRowEl.style.display = isGemini ? "block" : "none";
+      copilotModelRowEl.style.display = isCopilot ? "block" : "none";
       if (isGemini) {
         updateGeminiModelPreset();
       }
@@ -895,6 +911,10 @@ $("btnDownloadImage").addEventListener("click", () => {
       }
       $("providerPuter").style.display =
         providerEl.value === "puter" ? "block" : "none";
+      if ($("providerGpt4Free")) {
+        $("providerGpt4Free").style.display =
+          providerEl.value === "gpt4free" ? "block" : "none";
+      }
       llmConnected = false;
       updateLlmTabs(llmConnected);
     };
