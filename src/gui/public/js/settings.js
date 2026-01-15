@@ -56,6 +56,11 @@ export function applySettings(settings) {
   set("openaiBaseUrl", settings.openaiBaseUrl);
   set("openaiModel", settings.openaiModel);
   set("openaiApiKey", settings.openaiApiKey);
+  set("imageGenType", settings.imageGenType || "img");
+  set("imageGenBaseUrl", settings.imageGenBaseUrl);
+  set("imageGenModel", settings.imageGenModel);
+  set("imageGenApiKey", settings.imageGenApiKey);
+  set("imageGenSize", settings.imageGenSize);
   set("puterModel", settings.puterModel);
   const compressEl = $("compressImages");
   if (compressEl) {
@@ -79,6 +84,11 @@ export function captureSettings() {
     openaiBaseUrl: $("openaiBaseUrl").value || "",
     openaiModel: $("openaiModel").value || "",
     openaiApiKey: $("openaiApiKey").value || "",
+    imageGenType: $("imageGenType").value || "img",
+    imageGenBaseUrl: $("imageGenBaseUrl").value || "",
+    imageGenModel: $("imageGenModel").value || "",
+    imageGenApiKey: $("imageGenApiKey").value || "",
+    imageGenSize: $("imageGenSize").value || "1024x1024",
     puterModel: $("puterModel").value || "",
     compressImages: $("compressImages") ? $("compressImages").checked : false,
   };
@@ -136,6 +146,13 @@ export function collectLlmConfig() {
       base_url: $("openaiBaseUrl").value || "",
       model: $("openaiModel").value || "",
       api_key: $("openaiApiKey").value || "",
+    },
+    image_gen: {
+      type: $("imageGenType").value || "img",
+      base_url: $("imageGenBaseUrl").value || "",
+      model: $("imageGenModel").value || "",
+      api_key: $("imageGenApiKey").value || "",
+      size: $("imageGenType").value === "llm" ? undefined : ($("imageGenSize").value || "1024x1024"),
     },
     puter: {
       model: $("puterModel").value || "gemini-3-flash-preview",

@@ -265,7 +265,31 @@ export function setOutput(
   if (!el) return;
   el.textContent = text;
   el.className = isError ? "error" : isLoading ? "loading" : "";
+  // Hide image output when showing text output
+  const imgEl = $("outputImage");
+  if (imgEl && !isLoading) imgEl.style.display = "none";
   updateOutputParts(text, setOutputTab, isError, isLoading);
+}
+
+export function setOutputImage(urlOrBase64, setOutputTab, isError = false) {
+  const el = $("output");
+  const imgContainer = $("outputImage");
+  const img = $("generatedImage");
+  if (!el || !imgContainer || !img) return;
+
+  if (isError) {
+    el.textContent = urlOrBase64;
+    el.className = "error";
+    el.style.display = "block";
+    imgContainer.style.display = "none";
+  } else {
+    setOutputTab("output");
+    el.style.display = "none";
+    const actions = $("outputActions");
+    if (actions) actions.style.display = "none";
+    img.src = urlOrBase64;
+    imgContainer.style.display = "block";
+  }
 }
 
 export function showOutputLoading(text, setOutputTab) {

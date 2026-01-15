@@ -28,11 +28,46 @@
           <label for="provider">Fill missing fields</label>
           <select id="provider">
             <option value="none">Template only (no LLM)</option>
-            <option value="command" selected>Local CLI</option>
+            <option value="command">Local CLI</option>
             <option value="ollama">Ollama (HTTP)</option>
             <option value="openai_compatible">OpenAI-compatible API</option>
+            <option value="image_gen" selected>Antigravity Tools</option>
             <option value="puter">Puter.js (Cloud)</option>
           </select>
+
+          <div id="providerImageGen">
+            <label for="imageGenType">Antigravity Type</label>
+            <select id="imageGenType">
+              <option value="img" selected>Image Generation</option>
+              <option value="llm">LLM Chat</option>
+            </select>
+            <label for="imageGenBaseUrl">Base URL</label>
+            <input id="imageGenBaseUrl" value="http://127.0.0.1:8045/v1" placeholder="http://127.0.0.1:8045/v1/chat/completions" />
+            <label for="imageGenModel">Model</label>
+            <input id="imageGenModel" value="gemini-3-pro-image" data-default-llm="gemini-3-flash" data-default-img="gemini-3-pro-image" placeholder="e.g. gemini-3-pro-image" />
+            <label for="imageGenApiKey">API key</label>
+            <div class="input-wrapper">
+              <input id="imageGenApiKey" type="password" value="sk-ba1c60c03b7f47b8bc9f49ebee90b1cc" placeholder="sk-..." />
+              <button type="button" class="input-icon" id="toggleImageGenApiKey" title="Toggle visibility">
+                <svg id="eyeIconImageGen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
+            <div id="imageGenSizeRow">
+              <label for="imageGenSize">Size</label>
+              <select id="imageGenSize">
+                <option value="1024x1024" selected>1024x1024</option>
+                <option value="512x512">512x512</option>
+                <option value="1280x720">1280x720 (16:9)</option>
+                <option value="720x1280">720x1280 (9:16)</option>
+              </select>
+            </div>
+            <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
+              Custom endpoint for Antigravity Tools. API key is stored in your browser localStorage.
+            </div>
+          </div>
 
           <div id="providerPuter" style="display: none">
             <label for="puterModel">Model</label>
@@ -167,7 +202,10 @@
           <label for="chatImages">Images (optional)</label>
           <input id="chatImages" type="file" accept="image/*" multiple />
           <div id="chatImagesList" style="margin-top: 6px; font-size: 12px; color: var(--muted)"></div>
-          <button id="btnChatSend">Send</button>
+          <div style="display: flex; gap: 8px; margin-top: 10px">
+            <button id="btnChatSend" style="flex: 2">Send Message</button>
+            <button id="btnChatGenImage" style="flex: 1; background: var(--accent-secondary, #6366f1)">Antigravity Run</button>
+          </div>
           <div style="margin-top: 10px; font-size: 12px; color: var(--muted)">
             Response shows in the Output panel. Images are supported for Codex CLI.
           </div>
@@ -269,6 +307,7 @@
 
           <button id="btnGetPrompt">Get template</button>
           <button id="btnGenerate" style="margin-left: 8px">Generate (fill)</button>
+          <button id="btnPromptGenImage" style="margin-left: 8px; background: var(--accent-secondary, #6366f1)">Antigravity Run</button>
           <button id="btnAbort" type="button" style="margin-left: 8px" disabled>Abort</button>
           <div id="status" style="margin-top: 10px; font-size: 12px; color: var(--muted)"></div>
         </div>
@@ -315,6 +354,12 @@
         </div>
         <pre id="outputPreview">(ready)</pre>
         <pre id="output" style="display: none">(ready)</pre>
+        <div id="outputImage" style="display: none; margin-top: 10px; text-align: center">
+          <img id="generatedImage" />
+          <div style="margin-top: 8px">
+            <button id="btnDownloadImage">Download Image</button>
+          </div>
+        </div>
         <div id="videoPanel" style="display: none; padding: 14px">
           <label for="videoParts">Video parts (in order)</label>
           <input id="videoParts" type="file" accept="video/*" multiple />

@@ -1,9 +1,12 @@
-import { $ } from './utils.js';
+import { $ } from "./utils.js";
 
 export async function api(path, options) {
   const res = await fetch(path, {
     ...options,
-    headers: { "content-type": "application/json", ...(options && options.headers) },
+    headers: {
+      "content-type": "application/json",
+      ...(options && options.headers),
+    },
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.ok === false) {
@@ -94,4 +97,20 @@ export async function callLlm(prompt, onPart, collectLlmConfig, images = []) {
     if (onPart) onPart(chunk);
   }
   return fullText;
+}
+
+export async function generateImage(prompt, config) {
+  const res = await fetch("/api/generate-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, config }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to generate image");
+  }
+  // The custom endpoint returns an OpenAI-compatible chat response.
+  // We expect the image URL or base64 in the content.
+  // According to common implementations of such custom models, it might be a URL or a Markdown image.
+  return data;
 }

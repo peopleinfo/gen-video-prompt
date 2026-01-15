@@ -87,6 +87,50 @@ async function readJson(
   return parsed as JsonRecord;
 }
 
+async function proxyPost(
+  url: string,
+  body: JsonRecord,
+  headers: Record<string, string> = {}
+): Promise<{ status: number; data: any }> {
+  const urlObj = new URL(url);
+  const isHttps = urlObj.protocol === "https:";
+  const requester = isHttps ? https : http;
+
+  return new Promise((resolve, reject) => {
+    const bodyStr = JSON.stringify(body);
+    const req = requester.request(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...headers,
+        },
+      },
+      (res) => {
+        let resData = "";
+        res.on("data", (chunk) => {
+          resData += chunk;
+        });
+        res.on("end", () => {
+          try {
+            const parsed = JSON.parse(resData);
+            resolve({ status: res.statusCode || 200, data: parsed });
+          } catch {
+            resolve({
+              status: res.statusCode || 200,
+              data: { error: resData },
+            });
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.write(bodyStr);
+    req.end();
+  });
+}
+
 function asString(value: unknown): string | undefined {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -418,7 +462,9 @@ async function runOpenAiCompatible(params: {
   );
   try {
     const base = params.baseUrl.replace(/\/+$/, "");
-    const url = `${base}/v1/chat/completions`;
+    const url = base.endsWith("/v1")
+      ? `${base}/chat/completions`
+      : `${base}/v1/chat/completions`;
     const headers: Record<string, string> = {
       "content-type": "application/json",
     };
@@ -772,8 +818,9 @@ async function main(): Promise<void> {
             });
             return;
           }
-          const baseUrl = asString(body.base_url) ?? "http://127.0.0.1:11434";
-          const model = asString(body.model) ?? "";
+          const ollama = asObject(body.ollama);
+          const baseUrl = asString(ollama.base_url) ?? "http://127.0.0.1:11434";
+          const model = asString(ollama.model) ?? "";
           if (!model) {
             json(res, 400, {
               ok: false,
@@ -795,9 +842,10 @@ async function main(): Promise<void> {
             });
             return;
           }
-          const baseUrl = asString(body.base_url) ?? "";
-          const model = asString(body.model) ?? "";
-          const apiKey = asString(body.api_key);
+          const openai = asObject(body.openai_compatible);
+          const baseUrl = asString(openai.base_url) ?? "";
+          const model = asString(openai.model) ?? "";
+          const apiKey = asString(openai.api_key);
           if (!baseUrl) {
             json(res, 400, {
               ok: false,
@@ -809,6 +857,43 @@ async function main(): Promise<void> {
             json(res, 400, {
               ok: false,
               error: "Missing model for provider=openai_compatible",
+            });
+            return;
+          }
+          const out = await runOpenAiCompatible({
+            baseUrl,
+            model,
+            apiKey,
+            prompt: instruction,
+          });
+          json(res, 200, { ok: true, mode: "generated", text: out });
+          return;
+        }
+
+        if (provider === "image_gen") {
+          if (!ENABLE_HTTP_LLM) {
+            json(res, 400, {
+              ok: false,
+              error:
+                "HTTP LLM is disabled. Start with ENABLE_HTTP_LLM=1 (e.g. ENABLE_HTTP_LLM=1 PORT=3333 npm run gui).",
+            });
+            return;
+          }
+          const imageGen = asObject(body.image_gen);
+          const baseUrl = asString(imageGen.base_url) ?? "";
+          const model = asString(imageGen.model) ?? "";
+          const apiKey = asString(imageGen.api_key);
+          if (!baseUrl) {
+            json(res, 400, {
+              ok: false,
+              error: "Missing base_url for provider=image_gen",
+            });
+            return;
+          }
+          if (!model) {
+            json(res, 400, {
+              ok: false,
+              error: "Missing model for provider=image_gen",
             });
             return;
           }
@@ -900,6 +985,56 @@ async function main(): Promise<void> {
           });
         } finally {
           await fs.rm(tmpDir, { recursive: true, force: true });
+        }
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/api/generate-image") {
+        const body = await readJson(req, 1_000_000);
+        const prompt = asString(body.prompt) ?? "";
+        if (!prompt) {
+          json(res, 400, { ok: false, error: "Missing prompt" });
+          return;
+        }
+
+        const config = asObject(body.config);
+        const baseUrl = asString(config.base_url);
+        const model = asString(config.model);
+        const apiKey = asString(config.api_key);
+        const size = asString(config.size) ?? "1024x1024";
+
+        if (!baseUrl) {
+          json(res, 400, {
+            ok: false,
+            error: "Missing Antigravity Tools Base URL",
+          });
+          return;
+        }
+
+        try {
+          const base = baseUrl.replace(/\/+$/, "");
+          const fullUrl = base.endsWith("/v1")
+            ? `${base}/chat/completions`
+            : `${base}/v1/chat/completions`;
+
+          const payload: any = {
+            model: model || "gemini-3-pro-image",
+            messages: [{ role: "user", content: prompt }],
+          };
+
+          if (size) {
+            payload.extra_body = { size };
+          }
+
+          const headers: Record<string, string> = {};
+          if (apiKey) {
+            headers["Authorization"] = `Bearer ${apiKey}`;
+          }
+
+          const result = await proxyPost(fullUrl, payload, headers);
+          json(res, result.status, result.data);
+        } catch (err: any) {
+          json(res, 500, { ok: false, error: err.message });
         }
         return;
       }
@@ -1086,6 +1221,43 @@ async function main(): Promise<void> {
             json(res, 400, {
               ok: false,
               error: "Missing model for provider=openai_compatible",
+            });
+            return;
+          }
+          const out = await runOpenAiCompatible({
+            baseUrl,
+            model,
+            apiKey,
+            prompt,
+          });
+          json(res, 200, { ok: true, mode: "chat", text: out });
+          return;
+        }
+
+        if (provider === "image_gen") {
+          if (!ENABLE_HTTP_LLM) {
+            json(res, 400, {
+              ok: false,
+              error:
+                "HTTP LLM is disabled. Start with ENABLE_HTTP_LLM=1 (e.g. ENABLE_HTTP_LLM=1 PORT=3333 npm run gui).",
+            });
+            return;
+          }
+          const imageGen = asObject(body.image_gen);
+          const baseUrl = asString(imageGen.base_url) ?? "";
+          const model = asString(imageGen.model) ?? "";
+          const apiKey = asString(imageGen.api_key);
+          if (!baseUrl) {
+            json(res, 400, {
+              ok: false,
+              error: "Missing base_url for provider=image_gen",
+            });
+            return;
+          }
+          if (!model) {
+            json(res, 400, {
+              ok: false,
+              error: "Missing model for provider=image_gen",
             });
             return;
           }

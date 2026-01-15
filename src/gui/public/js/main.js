@@ -1,4 +1,11 @@
-import { api, callLlm, loadDocs, loadPrompts, loadTools } from "./api.js";
+import {
+  api,
+  callLlm,
+  generateImage,
+  loadDocs,
+  loadPrompts,
+  loadTools,
+} from "./api.js";
 import {
   applyPromptFields,
   assertValidPartLength,
@@ -13,6 +20,7 @@ import {
   partImageFiles,
   renderPartImageInputs,
   setOutput,
+  setOutputImage,
   showOutputLoading,
   updateOutputParts,
 } from "./prompts.js";
@@ -589,6 +597,111 @@ $("btnConnect").addEventListener("click", async () => {
   }
 });
 
+async function handleChatGenImage() {
+  try {
+    const prompt = $("chatPrompt").value.trim();
+    if (!prompt) {
+      setOutput("Enter a prompt for the tool first.", setOutputTab, true);
+      return;
+    }
+
+    const config = collectLlmConfig();
+    const imageConfig = config.image_gen;
+    const isLlm = imageConfig.type === "llm";
+
+    showOutputLoading(
+      isLlm ? "Running Antigravity Chat..." : "Running Antigravity Tool...",
+      setOutputTab
+    );
+
+    if (isLlm) {
+      let fullText = "";
+      setOutput("Running Antigravity Chat...", setOutputTab, false, true);
+      await callLlm(
+        prompt,
+        (part) => {
+          fullText += part;
+          setOutput(fullText, setOutputTab, false, true);
+        },
+        () => config
+      );
+      setOutput(fullText || "(empty response)", setOutputTab);
+      showToast("Antigravity Chat run successfully!");
+    } else {
+      const data = await generateImage(prompt, imageConfig);
+      const content = data?.choices?.[0]?.message?.content;
+      if (!content) {
+        throw new Error("No image content in response");
+      }
+      let imageUrl = content.trim();
+      const mdMatch = imageUrl.match(/!\[.*?\]\((.*?)\)/);
+      if (mdMatch) {
+        imageUrl = mdMatch[1];
+      }
+      setOutputImage(imageUrl, setOutputTab);
+      showToast("Antigravity Tool run successfully!");
+    }
+  } catch (e) {
+    setOutput(e && e.message ? e.message : String(e), setOutputTab, true);
+  }
+}
+
+async function handlePromptGenImage() {
+  try {
+    const story = $("story").value.trim();
+    if (!story) {
+      setOutput("Enter a story first.", setOutputTab, true);
+      return;
+    }
+
+    const config = collectLlmConfig();
+    const imageConfig = config.image_gen;
+    const isLlm = imageConfig.type === "llm";
+
+    showOutputLoading(
+      isLlm
+        ? "Running Antigravity Chat from story..."
+        : "Running Antigravity Tool from story...",
+      setOutputTab
+    );
+
+    if (isLlm) {
+      let fullText = "";
+      setOutput(
+        "Running Antigravity Chat from story...",
+        setOutputTab,
+        false,
+        true
+      );
+      await callLlm(
+        story,
+        (part) => {
+          fullText += part;
+          setOutput(fullText, setOutputTab, false, true);
+        },
+        () => config
+      );
+      setOutput(fullText || "(empty response)", setOutputTab);
+      showToast("Antigravity Chat run successfully from story!");
+    } else {
+      const data = await generateImage(story, imageConfig);
+      const content = data?.choices?.[0]?.message?.content;
+      if (!content) {
+        throw new Error("No image content in response");
+      }
+      let imageUrl = content.trim();
+      const mdMatch = imageUrl.match(/!\[.*?\]\((.*?)\)/);
+      if (mdMatch) {
+        imageUrl = mdMatch[1];
+      }
+      setOutputImage(imageUrl, setOutputTab);
+      showToast("Antigravity Tool run successfully from story!");
+    }
+  } catch (e) {
+    setOutput(e && e.message ? e.message : String(e), setOutputTab, true);
+  }
+}
+
 $("btnChatSend").addEventListener("click", async () => {
   try {
     const prompt = $("chatPrompt").value.trim();
@@ -614,6 +727,18 @@ $("btnChatSend").addEventListener("click", async () => {
   } catch (e) {
     setOutput(e && e.message ? e.message : String(e), setOutputTab, true);
   }
+});
+
+$("btnChatGenImage").addEventListener("click", handleChatGenImage);
+$("btnPromptGenImage").addEventListener("click", handlePromptGenImage);
+
+$("btnDownloadImage").addEventListener("click", () => {
+  const img = $("generatedImage");
+  if (!img || !img.src) return;
+  const link = document.createElement("a");
+  link.href = img.src;
+  link.download = `generated-image-${Date.now()}.png`;
+  link.click();
 });
 
 // Main Init
@@ -646,6 +771,29 @@ $("btnChatSend").addEventListener("click", async () => {
         if (status) status.textContent = "";
         clearVideoPreview();
       });
+    }
+
+    const imageGenTypeEl = $("imageGenType");
+    if (imageGenTypeEl) {
+      const updateImageGenVisibility = (type) => {
+        const modelEl = $("imageGenModel");
+        const sizeRow = $("imageGenSizeRow");
+        if (type === "llm") {
+          modelEl.value = modelEl.dataset.defaultLlm || "gemini-3-flash";
+          if (sizeRow) sizeRow.style.display = "none";
+        } else {
+          modelEl.value = modelEl.dataset.defaultImg || "gemini-3-pro-image";
+          if (sizeRow) sizeRow.style.display = "block";
+        }
+      };
+
+      imageGenTypeEl.addEventListener("change", (e) => {
+        updateImageGenVisibility(e.target.value);
+        saveSettings(captureSettings());
+      });
+
+      // Initial visibility based on current value
+      updateImageGenVisibility(imageGenTypeEl.value);
     }
 
     const promptFieldIds = [
@@ -741,6 +889,10 @@ $("btnChatSend").addEventListener("click", async () => {
       ollamaEl.style.display = providerEl.value === "ollama" ? "block" : "none";
       openaiEl.style.display =
         providerEl.value === "openai_compatible" ? "block" : "none";
+      if ($("providerImageGen")) {
+        $("providerImageGen").style.display =
+          providerEl.value === "image_gen" ? "block" : "none";
+      }
       $("providerPuter").style.display =
         providerEl.value === "puter" ? "block" : "none";
       llmConnected = false;
@@ -748,6 +900,26 @@ $("btnChatSend").addEventListener("click", async () => {
     };
 
     providerEl.addEventListener("change", updateProvider);
+
+    if ($("toggleImageGenApiKey")) {
+      $("toggleImageGenApiKey").addEventListener("click", () => {
+        const input = $("imageGenApiKey");
+        const icon = $("eyeIconImageGen");
+        if (input.type === "password") {
+          input.type = "text";
+          icon.innerHTML = `
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+            <line x1="1" y1="1" x2="23" y2="23"></line>
+          `;
+        } else {
+          input.type = "password";
+          icon.innerHTML = `
+            <path d="M1 12s4-8 11-8 11-8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          `;
+        }
+      });
+    }
     if (cmdPresetEl)
       cmdPresetEl.addEventListener("change", updateCommandPreset);
     if (codexModelPresetEl)
