@@ -25,8 +25,8 @@
     "rename:data": "tsx src/rename-data.ts"
   },
   "dependencies": {
-    "@gpt4free/g4f.dev": "^1.1.2",
     "@modelcontextprotocol/sdk": "^1.1.0",
+    "@nut-tree-fork/nut-js": "^4.2.6",
     "fast-glob": "^3.3.2",
     "pdf-parse": "^1.1.1"
   },

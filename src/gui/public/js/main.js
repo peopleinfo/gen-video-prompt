@@ -411,8 +411,10 @@ $("btnGenerate").addEventListener("click", async () => {
       payload.api_key = $("openaiApiKey").value || undefined;
     }
     if (provider === "gpt4free") {
+      payload.prompt = storyWithImages;
       payload.gpt4free = {
-        model: $("gpt4freeModel").value || undefined,
+        model: $("gpt4freeModel").value || "deepseek",
+        provider: provider || "gpt4free",
       };
     }
 
@@ -579,6 +581,10 @@ $("btnConnect").addEventListener("click", async () => {
       llmConnected = false;
       updateLlmTabs(llmConnected);
       return;
+    }
+    if (config.provider === "gpt4free") {
+      setLlmStatus("Downloading GPT4Free (if needed)...");
+      await api("/api/gpt4free/connect", { method: "POST" });
     }
     if (config.provider === "puter") {
       await puter.ai.chat("Reply with OK.", {

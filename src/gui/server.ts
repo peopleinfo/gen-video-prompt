@@ -1,13 +1,12 @@
 import { spawn } from "node:child_process";
+import * as crypto from "node:crypto";
+import * as fsSync from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
-// @ts-expect-error client.d.ts is not a module
-import G4FClient from "@gpt4free/g4f.dev";
-
-const g4f = new G4FClient();
+import { pipeline } from "node:stream/promises";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -23,6 +22,12 @@ const SSL_CERT_PATH = process.env.SSL_CERT ?? "";
 const ENABLE_COMMAND_LLM = process.env.ENABLE_COMMAND_LLM === "1";
 const ENABLE_HTTP_LLM = process.env.ENABLE_HTTP_LLM === "1";
 const MCP_SERVER_DEV = process.env.MCP_SERVER_DEV === "1";
+const G4F_API_URL = process.env.G4F_API_URL ?? "http://127.0.0.1:1337";
+const G4F_STARTUP_TIMEOUT_MS = Number(
+  process.env.G4F_STARTUP_TIMEOUT_MS ?? "0"
+);
+const G4F_VERSION = "v6.9.3";
+const G4F_RELEASE_BASE = `https://github.com/xtekky/gpt4free/releases/download/${G4F_VERSION}`;
 
 // `tsc` does not copy static assets into `dist/`, so serve the UI directly from `src/`.
 const PUBLIC_DIR = path.join(ROOT_DIR, "src", "gui", "public");
@@ -391,6 +396,345 @@ async function resolveFfmpegPath(): Promise<string> {
   if (override) return override;
   const bundled = await resolveBundledFfmpegPath();
   return bundled ?? "ffmpeg";
+}
+
+type G4fAsset = {
+  name: string;
+  sha256?: string;
+  archive?: "zip";
+};
+
+const G4F_ASSETS: Record<string, G4fAsset> = {
+  "darwin-arm64": {
+    name: "g4f-macos-v6.9.3-arm64",
+  },
+  "linux-arm64": {
+    name: "g4f-linux-v6.9.3-arm64",
+    sha256:
+      "fb014881a9ccc58718367d78f0d251ee7846315ad892fb2c759b14dc64f4c3e5",
+  },
+  "linux-x64": {
+    name: "g4f-linux-v6.9.3-x64",
+    sha256:
+      "612ce5e94a1936cd2b1269d3379a57d55144517925bca402fc1765a8dbf172aa",
+  },
+  "win32-x64": {
+    name: "g4f-windows-v6.9.3-x64.zip",
+    archive: "zip",
+  },
+};
+
+let g4fProcess: ReturnType<typeof spawn> | null = null;
+let g4fStartupPromise: Promise<void> | null = null;
+
+function splitArgs(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function getG4fPlatformKey(): string {
+  if (process.platform === "darwin") {
+    return `darwin-${process.arch}`;
+  }
+  if (process.platform === "linux") {
+    return `linux-${process.arch}`;
+  }
+  if (process.platform === "win32") {
+    return "win32-x64";
+  }
+  return `${process.platform}-${process.arch}`;
+}
+
+function getG4fBinaryName(): string {
+  return process.platform === "win32" ? "g4f.exe" : "g4f";
+}
+
+function getG4fBinaryPath(platformKey: string): string {
+  return path.join(
+    ROOT_DIR,
+    "bin",
+    "gpt4free",
+    platformKey,
+    getG4fBinaryName()
+  );
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  await new Promise<void>((resolve, reject) => {
+    const stream = fsSync.createReadStream(filePath);
+    stream.on("error", reject);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve());
+  });
+  return hash.digest("hex");
+}
+
+async function downloadToFile(
+  url: string,
+  dest: string,
+  redirectsLeft = 5
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const request = https.get(url, (res) => {
+      const status = res.statusCode ?? 0;
+      if (
+        status >= 300 &&
+        status < 400 &&
+        res.headers.location &&
+        res.headers.location.length > 0
+      ) {
+        if (redirectsLeft <= 0) {
+          reject(new Error("Too many redirects while downloading gpt4free."));
+          res.resume();
+          return;
+        }
+        const nextUrl = new URL(res.headers.location, url).toString();
+        res.resume();
+        downloadToFile(nextUrl, dest, redirectsLeft - 1)
+          .then(resolve)
+          .catch(reject);
+        return;
+      }
+      if (status !== 200) {
+        reject(new Error(`Download failed with status ${status}`));
+        res.resume();
+        return;
+      }
+      const fileStream = fsSync.createWriteStream(dest);
+      pipeline(res, fileStream).then(resolve).catch(reject);
+    });
+    request.on("error", reject);
+  });
+}
+
+async function runPowerShell(
+  args: string[],
+  timeoutMs = 60_000
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("powershell", args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: ROOT_DIR,
+      env: process.env,
+    });
+    let stderr = Buffer.alloc(0);
+    const killTimer = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr = Buffer.concat([stderr, chunk]);
+    });
+    child.on("error", (err) => {
+      clearTimeout(killTimer);
+      reject(err);
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(killTimer);
+      if (code !== 0) {
+        const signalInfo = signal ? `, signal ${signal}` : "";
+        reject(
+          new Error(
+            `PowerShell failed${signalInfo}: ${
+              stderr.toString("utf8") || "no stderr"
+            }`
+          )
+        );
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+async function extractZipWindows(zipPath: string, outDir: string): Promise<void> {
+  await runPowerShell([
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    `Expand-Archive -Path "${zipPath}" -DestinationPath "${outDir}" -Force`,
+  ]);
+}
+
+async function findExecutable(
+  dir: string,
+  targetExt: string
+): Promise<string | null> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = await findExecutable(entryPath, targetExt);
+      if (found) return found;
+      continue;
+    }
+    if (entry.isFile() && entry.name.toLowerCase().endsWith(targetExt)) {
+      return entryPath;
+    }
+  }
+  return null;
+}
+
+async function moveFile(src: string, dest: string): Promise<void> {
+  try {
+    await fs.rename(src, dest);
+  } catch (err: any) {
+    if (err && err.code === "EXDEV") {
+      await fs.copyFile(src, dest);
+      await fs.unlink(src);
+      return;
+    }
+    throw err;
+  }
+}
+
+async function downloadG4fBinary(): Promise<string> {
+  const platformKey = getG4fPlatformKey();
+  const asset = G4F_ASSETS[platformKey];
+  if (!asset) {
+    throw new Error(
+      `Unsupported platform for gpt4free download: ${platformKey}`
+    );
+  }
+  const targetDir = path.join(ROOT_DIR, "bin", "gpt4free", platformKey);
+  const targetPath = getG4fBinaryPath(platformKey);
+  if (await fileExists(targetPath)) {
+    return targetPath;
+  }
+  await fs.mkdir(targetDir, { recursive: true });
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "g4f-download-"));
+  try {
+    const downloadPath = path.join(tmpDir, asset.name);
+    await downloadToFile(`${G4F_RELEASE_BASE}/${asset.name}`, downloadPath);
+    if (asset.sha256) {
+      const digest = await sha256File(downloadPath);
+      if (digest !== asset.sha256) {
+        throw new Error(
+          `SHA256 mismatch for ${asset.name}. Expected ${asset.sha256} but got ${digest}.`
+        );
+      }
+    }
+    if (asset.archive === "zip") {
+      const extractDir = path.join(tmpDir, "extract");
+      await fs.mkdir(extractDir, { recursive: true });
+      await extractZipWindows(downloadPath, extractDir);
+      const exePath = await findExecutable(extractDir, ".exe");
+      if (!exePath) {
+        throw new Error("No executable found in gpt4free zip archive.");
+      }
+      await moveFile(exePath, targetPath);
+    } else {
+      await moveFile(downloadPath, targetPath);
+      await fs.chmod(targetPath, 0o755);
+    }
+    return targetPath;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function resolveG4fPath(): Promise<string> {
+  const override = process.env.G4F_PATH;
+  if (override) return override;
+  return await downloadG4fBinary();
+}
+
+function buildOpenAiUrl(baseUrl: string, endpoint: string): string {
+  const base = baseUrl.replace(/\/+$/, "");
+  if (base.endsWith("/v1")) {
+    return `${base}${endpoint}`;
+  }
+  return `${base}/v1${endpoint}`;
+}
+
+async function fetchStatus(url: string): Promise<number> {
+  const urlObj = new URL(url);
+  const requester = urlObj.protocol === "https:" ? https : http;
+  return await new Promise((resolve, reject) => {
+    const req = requester.request(urlObj, { method: "GET" }, (res) => {
+      res.resume();
+      res.on("end", () => resolve(res.statusCode || 0));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+async function isG4fServerHealthy(): Promise<boolean> {
+  try {
+    const status = await fetchStatus(buildOpenAiUrl(G4F_API_URL, "/models"));
+    return status >= 200 && status < 500;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureG4fServerReady(): Promise<void> {
+  if (await isG4fServerHealthy()) return;
+  throw new Error(
+    "gpt4free server is not running. Click Connect to download and start it."
+  );
+}
+
+async function startG4fServer(): Promise<void> {
+  if (await isG4fServerHealthy()) return;
+  if (!g4fStartupPromise) {
+    g4fStartupPromise = (async () => {
+      const g4fPath = await resolveG4fPath();
+      const args = splitArgs(process.env.G4F_ARGS);
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(g4fPath, args, {
+          stdio: ["ignore", "ignore", "pipe"],
+          cwd: ROOT_DIR,
+          env: process.env,
+        });
+        g4fProcess = child;
+        child.on("error", (err) => {
+          g4fProcess = null;
+          g4fStartupPromise = null;
+          reject(err);
+        });
+        child.on("exit", () => {
+          g4fProcess = null;
+          g4fStartupPromise = null;
+        });
+        resolve();
+      });
+
+      const deadline =
+        G4F_STARTUP_TIMEOUT_MS > 0
+          ? Date.now() + G4F_STARTUP_TIMEOUT_MS
+          : null;
+      while (!deadline || Date.now() < deadline) {
+        if (await isG4fServerHealthy()) return;
+        if (!g4fProcess) {
+          throw new Error("gpt4free process exited before it became ready.");
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      throw new Error(
+        "Timed out waiting for gpt4free to start. Set G4F_STARTUP_TIMEOUT_MS=0 to wait indefinitely."
+      );
+    })();
+  }
+  try {
+    await g4fStartupPromise;
+  } catch (err) {
+    g4fStartupPromise = null;
+    throw err;
+  }
 }
 
 async function runCommandLlm(params: {
@@ -932,14 +1276,18 @@ async function main(): Promise<void> {
           const gpt4free = asObject(body.gpt4free);
           const model = asString(gpt4free.model) || undefined;
           try {
-            const response = await g4f.chat.completions.create({
-              model: model || "gpt-4o",
-              messages: [
-                { role: "system", content: "You are a helpful assistant." },
-                { role: "user", content: instruction },
-              ],
-            });
-            const out = response.choices[0]?.message?.content ?? "";
+            await ensureG4fServerReady();
+            const response = await proxyPost(
+              buildOpenAiUrl(G4F_API_URL, "/chat/completions"),
+              {
+                model: model || "gpt-4o",
+                messages: [
+                  { role: "system", content: "You are a helpful assistant." },
+                  { role: "user", content: instruction },
+                ],
+              }
+            );
+            const out = response.data?.choices?.[0]?.message?.content ?? "";
             json(res, 200, { ok: true, mode: "generated", text: out });
           } catch (err: any) {
             json(res, 500, { ok: false, error: err.message });
@@ -1037,11 +1385,20 @@ async function main(): Promise<void> {
 
         if (provider === "gpt4free") {
           try {
-            const response = await g4f.images.generate({
-              model: model || "flux-2-pro",
-              prompt,
-            });
-            const imageUrl = response.data[0]?.url || "";
+            await ensureG4fServerReady();
+            const response = await proxyPost(
+              buildOpenAiUrl(G4F_API_URL, "/images/generations"),
+              {
+                model: model || "flux-2-pro",
+                prompt,
+              }
+            );
+            const imageData = response.data?.data?.[0] ?? {};
+            const imageUrl =
+              asString(imageData.url) ??
+              (asString(imageData.b64_json)
+                ? `data:image/png;base64,${imageData.b64_json}`
+                : "");
             json(res, 200, { ok: true, url: imageUrl });
           } catch (err: any) {
             json(res, 500, { ok: false, error: err.message });
@@ -1332,11 +1689,15 @@ async function main(): Promise<void> {
           const gpt4free = asObject(body.gpt4free);
           const model = asString(gpt4free.model) || undefined;
           try {
-            const response = await g4f.chat.completions.create({
-              model: model || "gpt-4o",
-              messages: [{ role: "user", content: prompt }],
-            });
-            const out = response.choices[0]?.message?.content ?? "";
+            await ensureG4fServerReady();
+            const response = await proxyPost(
+              buildOpenAiUrl(G4F_API_URL, "/chat/completions"),
+              {
+                model: model || "gpt-4o",
+                messages: [{ role: "user", content: prompt }],
+              }
+            );
+            const out = response.data?.choices?.[0]?.message?.content ?? "";
             json(res, 200, { ok: true, mode: "chat", text: out });
           } catch (err: any) {
             json(res, 500, { ok: false, error: err.message });
@@ -1345,6 +1706,16 @@ async function main(): Promise<void> {
         }
 
         json(res, 400, { ok: false, error: `Unknown provider: ${provider}` });
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/api/gpt4free/connect") {
+        try {
+          await startG4fServer();
+          json(res, 200, { ok: true });
+        } catch (err: any) {
+          json(res, 500, { ok: false, error: err.message });
+        }
         return;
       }
 
