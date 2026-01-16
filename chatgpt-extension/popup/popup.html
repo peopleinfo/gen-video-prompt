@@ -8,36 +8,112 @@
   </head>
   <body>
     <div class="container">
-      <h1>Generated Images</h1>
+      <div class="header-row">
+        <h1>Prompt Chat</h1>
+        <button id="openApi" class="link-button" type="button">API</button>
+      </div>
 
-      <div class="controls">
-        <button id="downloadAll" class="btn btn-primary">
-          Download All as ZIP
+      <div class="tabs" role="tablist">
+        <button
+          class="tab active"
+          data-tab="prompt"
+          type="button"
+          role="tab"
+          aria-selected="true"
+        >
+          Prompt
         </button>
-        <button id="clearAll" class="btn btn-danger">Clear All</button>
+        <button
+          class="tab"
+          data-tab="chat"
+          type="button"
+          role="tab"
+          aria-selected="false"
+        >
+          Chat
+        </button>
+        <button
+          class="tab"
+          data-tab="gui"
+          type="button"
+          role="tab"
+          aria-selected="false"
+        >
+          AI GUI
+        </button>
       </div>
 
-      <div class="chat-box">
-        <textarea
-          id="chatPrompt"
-          placeholder="LLM Chat"
-          rows="4"
-        ></textarea>
-        <div class="chat-actions">
-          <button id="sendChat" class="btn btn-secondary">Chat</button>
-          <button id="abortChat" class="btn btn-danger" disabled>Abort</button>
+      <section
+        class="tab-content active"
+        id="tab-prompt"
+        data-active="true"
+        role="tabpanel"
+      >
+        <div class="prompt-box">
+          <textarea
+            id="promptInput"
+            placeholder="Type a prompt to send to ChatGPT..."
+            rows="4"
+          ></textarea>
+          <div class="prompt-actions">
+            <button id="fillPrompt" class="btn btn-secondary">
+              Fill Prompt
+            </button>
+            <button id="sendPrompt" class="btn btn-primary">Send Prompt</button>
+          </div>
         </div>
-      </div>
-      <div id="chatOutput" class="chat-output"></div>
-      <button id="sendToPrompt" class="btn btn-secondary">
-        Send Prompt & Start
-      </button>
 
-      <div id="gallery" class="gallery">
-        <p class="empty-message">
-          No images yet. Use the buttons on ChatGPT to generate images!
-        </p>
-      </div>
+        <div class="controls">
+          <button id="downloadAll" class="btn btn-primary">
+            Download All as ZIP
+          </button>
+          <button id="clearAll" class="btn btn-danger">Clear All</button>
+        </div>
+
+        <div id="gallery" class="gallery">
+          <p class="empty-message">
+            No images yet. Use the buttons on ChatGPT to generate images!
+          </p>
+        </div>
+      </section>
+
+      <section
+        class="tab-content"
+        id="tab-chat"
+        data-active="false"
+        role="tabpanel"
+      >
+        <div class="chat-box">
+          <textarea id="chatPrompt" placeholder="LLM Chat" rows="4"></textarea>
+          <div class="chat-actions">
+            <button id="sendChat" class="btn btn-secondary">Chat</button>
+            <button id="abortChat" class="btn btn-danger" disabled>
+              Abort
+            </button>
+          </div>
+        </div>
+        <div id="chatOutput" class="chat-output"></div>
+        <button id="useChatOutput" class="btn btn-small">
+          Use Response as Prompt
+        </button>
+      </section>
+
+      <section
+        class="tab-content"
+        id="tab-gui"
+        data-active="false"
+        role="tabpanel"
+      >
+        <div class="iframe-wrap">
+          <iframe
+            title="AI GUI"
+            src="about:blank"
+            data-src="https://localhost:3333/"
+            loading="lazy"
+            allow="clipboard-read; clipboard-write"
+          ></iframe>
+        </div>
+      </section>
 
       <div id="status" class="status"></div>
     </div>

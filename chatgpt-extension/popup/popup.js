@@ -1,7 +1,10 @@
 let chatAbortController = null;
+let setActiveTab = () => {};
 
 document.addEventListener("DOMContentLoaded", async () => {
+  initTabs();
   await restoreChatState();
+  await restorePromptState();
   loadGallery();
 
   document
@@ -11,14 +14,59 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("sendChat").addEventListener("click", sendChat);
   document.getElementById("abortChat").addEventListener("click", abortChat);
   document
-    .getElementById("sendToPrompt")
-    .addEventListener("click", sendToPrompt);
+    .getElementById("fillPrompt")
+    .addEventListener("click", fillPromptWithLlm);
+  document
+    .getElementById("sendPrompt")
+    .addEventListener("click", () => sendPromptMessage("send-prompt"));
+  document
+    .getElementById("useChatOutput")
+    .addEventListener("click", useChatOutputAsPrompt);
+  document.getElementById("openApi").addEventListener("click", openApiTab);
 
   const chatPrompt = document.getElementById("chatPrompt");
   chatPrompt.addEventListener("input", () => {
     saveChatState({ prompt: chatPrompt.value });
   });
+
+  const promptInput = document.getElementById("promptInput");
+  promptInput.addEventListener("input", () => {
+    savePromptState(promptInput.value);
+  });
 });
+
+function initTabs() {
+  const tabs = Array.from(document.querySelectorAll(".tab"));
+  const panels = Array.from(document.querySelectorAll(".tab-content"));
+
+  const activate = (name) => {
+    tabs.forEach((tab) => {
+      const isActive = tab.dataset.tab === name;
+      tab.classList.toggle("active", isActive);
+      tab.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
+
+    panels.forEach((panel) => {
+      const isActive = panel.id === `tab-${name}`;
+      panel.classList.toggle("active", isActive);
+      panel.dataset.active = isActive ? "true" : "false";
+    });
+
+    if (name === "gui") {
+      const iframe = document.querySelector("#tab-gui iframe");
+      if (iframe && iframe.dataset.src && iframe.src !== iframe.dataset.src) {
+        iframe.src = iframe.dataset.src;
+      }
+    }
+  };
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => activate(tab.dataset.tab));
+  });
+
+  setActiveTab = activate;
+  activate("prompt");
+}
 
 async function loadGallery() {
   const result = await chrome.storage.local.get(["generatedImages"]);
@@ -170,7 +218,9 @@ async function sendChat() {
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
       throw new Error(
-        `Request failed: ${response.status}${errorText ? ` - ${errorText}` : ""}`
+        `Request failed: ${response.status}${
+          errorText ? ` - ${errorText}` : ""
+        }`
       );
     }
 
@@ -197,33 +247,105 @@ async function sendChat() {
   }
 }
 
-async function sendToPrompt() {
-  const chatOutput = document.getElementById("chatOutput");
-  const text = (chatOutput.textContent || "").trim();
+async function sendPromptMessage(type) {
+  const promptInput = document.getElementById("promptInput");
+  const text = (promptInput.value || "").trim();
   if (!text) {
-    showStatus("No output to send");
+    showStatus("Enter a prompt first");
     return;
   }
 
-  const [tab] = await chrome.tabs.query({
+  const [activeTab] = await chrome.tabs.query({
     active: true,
     currentWindow: true,
   });
 
-  if (!tab || !tab.id) {
-    showStatus("No active tab");
+  let targetTab = null;
+  if (activeTab && isChatGptUrl(activeTab.url)) {
+    targetTab = activeTab;
+  } else {
+    const matchingTabs = await chrome.tabs.query({
+      url: ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+    });
+    targetTab = matchingTabs[0] || null;
+  }
+
+  if (!targetTab || !targetTab.id) {
+    showStatus("Open ChatGPT to send prompts");
     return;
   }
 
   try {
-    await chrome.tabs.sendMessage(tab.id, {
-      type: "send-prompt",
+    await chrome.tabs.sendMessage(targetTab.id, {
+      type,
       text,
     });
-    showStatus("Prompt sent");
+    showStatus(type === "fill-prompt" ? "Prompt filled" : "Prompt sent");
   } catch (error) {
     console.error("Send prompt error:", error);
-    showStatus("Failed to send");
+    showStatus("Refresh ChatGPT tab and try again");
+  }
+}
+
+async function fillPromptWithLlm() {
+  const promptInput = document.getElementById("promptInput");
+  const text = (promptInput.value || "").trim();
+  if (!text) {
+    showStatus("Enter a prompt first");
+    return;
+  }
+
+  showStatus("Filling prompt...");
+
+  const body = {
+    prompt: text,
+    provider: "command",
+    command: "codex",
+    codex_model: "",
+    codex_session: "new",
+    gemini_model: "",
+    ollama: { base_url: "", model: "" },
+    openai_compatible: { base_url: "", model: "", api_key: "" },
+    puter: { model: "gemini-3-flash-preview" },
+    gpt4free: { model: "deepseek" },
+    images: [],
+  };
+
+  try {
+    const response = await fetch("https://localhost:3333/api/chat", {
+      headers: {
+        accept: "*/*",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+      method: "POST",
+      mode: "cors",
+      credentials: "omit",
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      throw new Error(
+        `Request failed: ${response.status}${
+          errorText ? ` - ${errorText}` : ""
+        }`
+      );
+    }
+
+    const data = await response.json().catch(() => null);
+    const resultText = data && typeof data.text === "string" ? data.text : "";
+
+    if (!resultText) {
+      showStatus("No response text");
+      return;
+    }
+
+    promptInput.value = resultText;
+    savePromptState(resultText);
+    showStatus("Prompt filled");
+  } catch (error) {
+    console.error("Fill prompt error:", error);
+    showStatus("Fill failed");
   }
 }
 
@@ -242,6 +364,14 @@ async function restoreChatState() {
   chatOutput.textContent = chatOutputValue;
 }
 
+async function restorePromptState() {
+  const { promptInputValue = "" } = await chrome.storage.local.get([
+    "promptInputValue",
+  ]);
+  const promptInput = document.getElementById("promptInput");
+  promptInput.value = promptInputValue;
+}
+
 function saveChatState({ prompt, output }) {
   const data = {};
   if (typeof prompt === "string") data.chatPromptValue = prompt;
@@ -249,4 +379,37 @@ function saveChatState({ prompt, output }) {
   if (Object.keys(data).length > 0) {
     chrome.storage.local.set(data);
   }
+}
+
+function savePromptState(value) {
+  chrome.storage.local.set({ promptInputValue: value });
+}
+
+function useChatOutputAsPrompt() {
+  const chatOutput = document.getElementById("chatOutput");
+  const promptInput = document.getElementById("promptInput");
+  const text = (chatOutput.textContent || "").trim();
+
+  if (!text) {
+    showStatus("No chat response to use");
+    return;
+  }
+
+  promptInput.value = text;
+  savePromptState(text);
+  setActiveTab("prompt");
+  promptInput.focus();
+  showStatus("Response moved to Prompt");
+}
+
+function isChatGptUrl(url) {
+  if (!url) return false;
+  return (
+    url.startsWith("https://chatgpt.com/") ||
+    url.startsWith("https://chat.openai.com/")
+  );
+}
+
+function openApiTab() {
+  chrome.tabs.create({ url: "https://localhost:3333/" });
 }
