@@ -128,7 +128,7 @@ const observer = new MutationObserver(() => {
 
 observer.observe(document.body, { childList: true, subtree: true });
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return;
   if (message.type === 'fill-prompt') {
     fillPanelInput(message.text);
@@ -137,5 +137,34 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'send-prompt') {
     fillPanelInput(message.text);
     pasteAndSendPrompt(message.text);
+    return;
+  }
+  if (message.type === 'scrape-images') {
+    const urls = collectImageUrls();
+    sendResponse({ urls });
   }
 });
+
+function collectImageUrls() {
+  const urls = [];
+  document.body.querySelectorAll("img[src]").forEach((img) => {
+    if ((img.getAttribute("alt") || "").trim() !== "Generated image") return;
+    const src = img.getAttribute("src");
+    if (!src) return;
+    urls.push(normalizeUrl(src));
+  });
+  const unique = new Set();
+  return urls.filter((url) => {
+    if (!url || unique.has(url)) return false;
+    unique.add(url);
+    return true;
+  });
+}
+
+function normalizeUrl(raw) {
+  try {
+    return new URL(raw, window.location.href).toString();
+  } catch {
+    return raw;
+  }
+}

@@ -376,6 +376,25 @@
             <button id="btnDownloadImage">Download Image</button>
           </div>
         </div>
+        <div id="scrapeGallery" style="margin-top: 16px">
+          <label for="scrapeHtml">Scrape images from HTML</label>
+          <textarea
+            id="scrapeHtml"
+            placeholder="Paste HTML with <img> tags or og:image meta tags"
+            style="min-height: 90px"
+          ></textarea>
+          <div class="scrape-actions">
+            <button id="btnScrapeImages" type="button">Scrape images</button>
+            <button id="btnRefreshScrape" type="button">Refresh gallery</button>
+            <button id="btnClearScrape" type="button">Clear</button>
+            <button id="btnSelectAllScraped" type="button">Select all</button>
+            <button id="btnDownloadScrapedZip" type="button" disabled>
+              Download selected (zip)
+            </button>
+            <div id="scrapeStatus" class="scrape-status"></div>
+          </div>
+          <div id="scrapedImages" class="image-gallery"></div>
+        </div>
         <div id="videoPanel" style="display: none; padding: 14px">
           <label for="videoParts">Video parts (in order)</label>
           <input id="videoParts" type="file" accept="video/*" multiple />

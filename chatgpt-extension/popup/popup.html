@@ -96,6 +96,39 @@
             No images yet. Use the buttons on ChatGPT to generate images!
           </p>
         </div>
+
+        <div class="prompt-box">
+          <div class="section-label">Scrape images</div>
+          <textarea
+            id="scrapeHtml"
+            placeholder="Paste HTML with <img> tags or og:image meta tags"
+            rows="4"
+          ></textarea>
+          <div class="scrape-actions">
+            <button id="scrapeImages" class="btn btn-secondary" type="button">
+              Scrape
+            </button>
+            <button id="scrapeFromDom" class="btn btn-secondary" type="button">
+              Scrape page
+            </button>
+            <button id="refreshScrape" class="btn btn-secondary" type="button">
+              Refresh
+            </button>
+            <button id="clearScrape" class="btn btn-danger" type="button">
+              Clear
+            </button>
+            <button id="selectAllScrape" class="btn btn-secondary" type="button">
+              Select all
+            </button>
+            <button id="downloadScrapeZip" class="btn btn-primary" type="button" disabled>
+              Download selected
+            </button>
+            <div id="scrapeStatus" class="inline-status"></div>
+          </div>
+          <div id="scrapeGallery" class="scrape-gallery">
+            <p class="empty-message">Paste HTML and click Scrape.</p>
+          </div>
+        </div>
       </section>
 
       <section

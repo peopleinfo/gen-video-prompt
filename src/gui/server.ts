@@ -141,6 +141,71 @@ async function proxyPost(
   });
 }
 
+async function fetchWithRedirects(
+  url: string,
+  redirectsLeft = 3,
+  limitBytes = 15_000_000
+): Promise<{ headers: http.IncomingHttpHeaders; body: Buffer }> {
+  const urlObj = new URL(url);
+  const isHttps = urlObj.protocol === "https:";
+  const requester = isHttps ? https : http;
+
+  return await new Promise((resolve, reject) => {
+    const req = requester.request(
+      url,
+      {
+        method: "GET",
+        headers: {
+          "User-Agent": "gen-video-prompt-gui",
+          Accept: "image/*,*/*;q=0.8",
+        },
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        if ([301, 302, 303, 307, 308].includes(status)) {
+          const location = res.headers.location;
+          res.resume();
+          if (!location) {
+            reject(new Error("Redirect missing location header"));
+            return;
+          }
+          if (redirectsLeft <= 0) {
+            reject(new Error("Too many redirects while fetching image"));
+            return;
+          }
+          const nextUrl = new URL(location, url).toString();
+          fetchWithRedirects(nextUrl, redirectsLeft - 1, limitBytes)
+            .then(resolve)
+            .catch(reject);
+          return;
+        }
+        if (status < 200 || status >= 300) {
+          res.resume();
+          reject(new Error(`HTTP ${status} from ${url}`));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > limitBytes) {
+            res.destroy();
+            reject(new Error("Image too large"));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on("end", () => {
+          resolve({ headers: res.headers, body: Buffer.concat(chunks) });
+        });
+        res.on("error", reject);
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 function asString(value: unknown): string | undefined {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -927,6 +992,46 @@ async function main(): Promise<void> {
       if (method === "GET" && url.pathname === "/api/prompts") {
         const result = await mcp.request((c) => c.listPrompts());
         json(res, 200, result as unknown as JsonRecord);
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/api/image-proxy") {
+        const target = url.searchParams.get("url") ?? "";
+        if (!target) {
+          json(res, 400, { ok: false, error: "Missing url parameter" });
+          return;
+        }
+        let targetUrl: URL;
+        try {
+          targetUrl = new URL(target);
+        } catch {
+          json(res, 400, { ok: false, error: "Invalid url parameter" });
+          return;
+        }
+        if (!["http:", "https:"].includes(targetUrl.protocol)) {
+          json(res, 400, {
+            ok: false,
+            error: "Only http/https URLs are allowed",
+          });
+          return;
+        }
+        try {
+          const result = await fetchWithRedirects(targetUrl.toString());
+          const contentType =
+            typeof result.headers["content-type"] === "string"
+              ? result.headers["content-type"]
+              : "application/octet-stream";
+          res.writeHead(200, {
+            "content-type": contentType,
+            "cache-control": "no-store",
+          });
+          res.end(result.body);
+        } catch (err: any) {
+          json(res, 502, {
+            ok: false,
+            error: err && err.message ? err.message : "Fetch failed",
+          });
+        }
         return;
       }
 

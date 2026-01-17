@@ -83,6 +83,25 @@ document.addEventListener("DOMContentLoaded", async () => {
   queueInterval.addEventListener("input", () => {
     saveQueueState({ interval: queueInterval.value });
   });
+
+  document
+    .getElementById("scrapeImages")
+    .addEventListener("click", handleScrapeImages);
+  document
+    .getElementById("refreshScrape")
+    .addEventListener("click", handleRefreshScrape);
+  document
+    .getElementById("scrapeFromDom")
+    .addEventListener("click", handleScrapeFromDom);
+  document
+    .getElementById("clearScrape")
+    .addEventListener("click", clearScrapeGallery);
+  document
+    .getElementById("selectAllScrape")
+    .addEventListener("click", toggleSelectAllScrape);
+  document
+    .getElementById("downloadScrapeZip")
+    .addEventListener("click", downloadScrapeZip);
 });
 
 function initTabs() {
@@ -557,4 +576,249 @@ function isChatGptUrl(url) {
 
 function openApiTab() {
   chrome.tabs.create({ url: "https://localhost:3333/" });
+}
+
+function parseImageUrlsFromHtml(html) {
+  const cleaned = (html || "").trim();
+  if (!cleaned) return [];
+  const doc = new DOMParser().parseFromString(cleaned, "text/html");
+  const urls = [];
+  doc.querySelectorAll("img[src]").forEach((img) => {
+    const src = img.getAttribute("src");
+    if (src) urls.push(src.trim());
+  });
+  doc
+    .querySelectorAll('meta[property="og:image"], meta[name="og:image"]')
+    .forEach((meta) => {
+      const content = meta.getAttribute("content");
+      if (content) urls.push(content.trim());
+    });
+  const unique = new Set();
+  return urls.filter((url) => {
+    if (!url || unique.has(url)) return false;
+    unique.add(url);
+    return true;
+  });
+}
+
+function renderScrapeGallery(urls) {
+  scrapedImageUrls = urls;
+  const gallery = document.getElementById("scrapeGallery");
+  if (!gallery) return;
+  if (!urls.length) {
+    gallery.innerHTML =
+      '<p class="empty-message">No images found. Paste HTML and click Scrape.</p>';
+    updateScrapeStatus();
+    return;
+  }
+  gallery.innerHTML = urls
+    .map(
+      (url, index) => `
+    <label class="scrape-item" data-index="${index}">
+      <input type="checkbox" data-url="${url}" checked>
+      <img src="${url}" alt="Scraped image">
+      <div class="scrape-url">${url}</div>
+    </label>
+  `
+    )
+    .join("");
+  gallery.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.addEventListener("change", updateScrapeStatus);
+  });
+  updateScrapeStatus();
+}
+
+function updateScrapeStatus() {
+  const status = document.getElementById("scrapeStatus");
+  const downloadBtn = document.getElementById("downloadScrapeZip");
+  const selectBtn = document.getElementById("selectAllScrape");
+  const gallery = document.getElementById("scrapeGallery");
+  if (!status || !downloadBtn || !selectBtn || !gallery) return;
+  const checks = Array.from(
+    gallery.querySelectorAll('input[type="checkbox"]')
+  );
+  const selected = checks.filter((el) => el.checked).length;
+  const total = checks.length;
+  status.textContent = total
+    ? `${selected} of ${total} selected`
+    : "No images detected";
+  downloadBtn.disabled = selected === 0;
+  selectBtn.textContent =
+    total > 0 && selected === total ? "Clear selection" : "Select all";
+}
+
+function handleScrapeImages() {
+  const html = document.getElementById("scrapeHtml").value || "";
+  const urls = parseImageUrlsFromHtml(html);
+  if (!urls.length) {
+    showStatus("No images found in HTML");
+  }
+  renderScrapeGallery(urls);
+}
+
+function handleRefreshScrape() {
+  const html = document.getElementById("scrapeHtml").value || "";
+  const urls = parseImageUrlsFromHtml(html);
+  renderScrapeGallery(urls);
+}
+
+async function handleScrapeFromDom() {
+  const targetTab = await getChatGptTab();
+  if (!targetTab || !targetTab.id) {
+    showStatus("Open ChatGPT to scrape images");
+    return;
+  }
+  showStatus("Scraping images...");
+  chrome.tabs.sendMessage(
+    targetTab.id,
+    { type: "scrape-images" },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        showStatus("Refresh ChatGPT tab and try again");
+        return;
+      }
+      const urls = response && Array.isArray(response.urls) ? response.urls : [];
+      if (!urls.length) {
+        showStatus("No images found on page");
+      }
+      renderScrapeGallery(urls);
+    }
+  );
+}
+
+function clearScrapeGallery() {
+  const input = document.getElementById("scrapeHtml");
+  if (input) input.value = "";
+  const gallery = document.getElementById("scrapeGallery");
+  if (gallery) {
+    gallery.innerHTML =
+      '<p class="empty-message">Paste HTML and click Scrape.</p>';
+  }
+  scrapedImageUrls = [];
+  updateScrapeStatus();
+}
+
+function toggleSelectAllScrape() {
+  const gallery = document.getElementById("scrapeGallery");
+  if (!gallery) return;
+  const checks = Array.from(
+    gallery.querySelectorAll('input[type="checkbox"]')
+  );
+  if (!checks.length) return;
+  const allSelected = checks.every((el) => el.checked);
+  checks.forEach((el) => {
+    el.checked = !allSelected;
+  });
+  updateScrapeStatus();
+}
+
+function getSelectedScrapeUrls() {
+  const gallery = document.getElementById("scrapeGallery");
+  if (!gallery) return [];
+  return Array.from(
+    gallery.querySelectorAll('input[type="checkbox"]:checked')
+  )
+    .map((el) => el.dataset.url)
+    .filter(Boolean);
+}
+
+function guessFileExtension(url, mimeType) {
+  const type = (mimeType || "").toLowerCase();
+  if (type.includes("png")) return "png";
+  if (type.includes("jpeg") || type.includes("jpg")) return "jpg";
+  if (type.includes("webp")) return "webp";
+  if (type.includes("gif")) return "gif";
+  if (type.includes("svg")) return "svg";
+  if (type.includes("avif")) return "avif";
+  if (url) {
+    const clean = url.split("?")[0].split("#")[0];
+    const last = clean.split("/").pop();
+    if (last && last.includes(".")) {
+      return last.split(".").pop().toLowerCase();
+    }
+  }
+  return "png";
+}
+
+function guessFileName(url, index, mimeType, usedNames) {
+  let base = "";
+  if (url) {
+    const clean = url.split("?")[0].split("#")[0];
+    base = clean.split("/").pop() || "";
+  }
+  const ext = guessFileExtension(url, mimeType);
+  if (!base || !base.includes(".")) {
+    base = `image-${index + 1}.${ext}`;
+  }
+  const safeBase = base.replace(/[^\w.\-]+/g, "-");
+  const key = safeBase.toLowerCase();
+  const count = usedNames.get(key) || 0;
+  usedNames.set(key, count + 1);
+  if (count === 0) return safeBase;
+  const parts = safeBase.split(".");
+  const suffix = `-${count + 1}`;
+  if (parts.length === 1) return `${safeBase}${suffix}`;
+  return `${parts.slice(0, -1).join(".")}${suffix}.${parts.at(-1)}`;
+}
+
+async function fetchImageData(url, timeoutMs = 8000) {
+  const isHttp = /^https?:\/\//i.test(url);
+  const fetchUrl = isHttp
+    ? `https://localhost:3333/api/image-proxy?url=${encodeURIComponent(url)}`
+    : url;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(fetchUrl, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${url}`);
+    }
+    const mimeType = response.headers.get("content-type") || "";
+    const data = await response.arrayBuffer();
+    return { data, mimeType };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function downloadScrapeZip() {
+  const status = document.getElementById("scrapeStatus");
+  const urls = getSelectedScrapeUrls();
+  if (!urls.length) {
+    if (status) status.textContent = "No images selected";
+    return;
+  }
+  if (status) status.textContent = "Downloading images...";
+  const zip = new JSZip();
+  const usedNames = new Map();
+  let added = 0;
+  let failed = 0;
+  for (let i = 0; i < urls.length; i += 1) {
+    const url = urls[i];
+    if (status) status.textContent = `Downloading ${i + 1} of ${urls.length}...`;
+    try {
+      const { data, mimeType } = await fetchImageData(url);
+      const name = guessFileName(url, added, mimeType, usedNames);
+      zip.file(name, data);
+      added += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  if (!added) {
+    if (status) status.textContent = "Download failed";
+    return;
+  }
+  const blob = await zip.generateAsync({ type: "blob" });
+  const zipUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = zipUrl;
+  a.download = `scraped-images-${Date.now()}.zip`;
+  a.click();
+  URL.revokeObjectURL(zipUrl);
+  if (status) {
+    status.textContent = failed
+      ? `${added} zipped, ${failed} failed`
+      : `${added} images zipped`;
+  }
 }

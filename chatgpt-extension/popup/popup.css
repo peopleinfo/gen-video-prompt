@@ -192,6 +192,48 @@ h1 {
   max-height: 300px;
   overflow-y: auto;
 }
+.scrape-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.scrape-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.scrape-item {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #2a2a4a;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+}
+.scrape-item img {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  display: block;
+  border-radius: 6px;
+}
+.scrape-item input[type="checkbox"] {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 16px;
+  height: 16px;
+}
+.scrape-url {
+  font-size: 11px;
+  color: #a1a1aa;
+  word-break: break-all;
+}
 
 .chat-box {
   display: flex;

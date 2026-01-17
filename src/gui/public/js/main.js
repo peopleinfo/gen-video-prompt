@@ -66,6 +66,19 @@ let generateAbortController = null;
 let mergedVideoUrl = "";
 let workspaces = [];
 let activeWorkspaceId = "";
+let scrapedImageUrls = [];
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    let c = i;
+    for (let k = 0; k < 8; k += 1) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
 
 const PREVIEW_TEMPLATE = [
   "Part 1 (start–end s):",
@@ -80,6 +93,284 @@ const PREVIEW_TEMPLATE = [
   "",
   "Repeat the Part block for each segment when Part length is provided.",
 ].join("\n");
+
+function parseImageUrlsFromHtml(html) {
+  const cleaned = (html || "").trim();
+  if (!cleaned) return [];
+  const doc = new DOMParser().parseFromString(cleaned, "text/html");
+  const urls = [];
+  doc.querySelectorAll("img[src]").forEach((img) => {
+    const src = img.getAttribute("src");
+    if (src) urls.push(src.trim());
+  });
+  doc
+    .querySelectorAll('meta[property="og:image"], meta[name="og:image"]')
+    .forEach((meta) => {
+      const content = meta.getAttribute("content");
+      if (content) urls.push(content.trim());
+    });
+  const unique = new Set();
+  return urls.filter((url) => {
+    if (!url || unique.has(url)) return false;
+    unique.add(url);
+    return true;
+  });
+}
+
+function renderScrapedImages(urls) {
+  scrapedImageUrls = urls;
+  const container = $("scrapedImages");
+  if (!container) return;
+  container.innerHTML = "";
+  urls.forEach((url) => {
+    const card = document.createElement("label");
+    card.className = "image-card";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.dataset.url = url;
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.alt = "Scraped image";
+    img.src = url;
+    const meta = document.createElement("div");
+    meta.className = "image-meta";
+    meta.textContent = url;
+    checkbox.addEventListener("change", updateScrapeStatus);
+    card.appendChild(checkbox);
+    card.appendChild(img);
+    card.appendChild(meta);
+    container.appendChild(card);
+  });
+  updateScrapeStatus();
+}
+
+function updateScrapeStatus() {
+  const status = $("scrapeStatus");
+  const downloadBtn = $("btnDownloadScrapedZip");
+  const selectBtn = $("btnSelectAllScraped");
+  const container = $("scrapedImages");
+  if (!status || !downloadBtn || !selectBtn || !container) return;
+  const checks = Array.from(
+    container.querySelectorAll('input[type="checkbox"]')
+  );
+  const selected = checks.filter((el) => el.checked).length;
+  const total = checks.length;
+  status.textContent = total
+    ? `${selected} of ${total} selected`
+    : "No images detected";
+  downloadBtn.disabled = selected === 0;
+  selectBtn.textContent =
+    total > 0 && selected === total ? "Clear selection" : "Select all";
+}
+
+function uint16LE(value) {
+  return new Uint8Array([value & 0xff, (value >> 8) & 0xff]);
+}
+
+function uint32LE(value) {
+  return new Uint8Array([
+    value & 0xff,
+    (value >> 8) & 0xff,
+    (value >> 16) & 0xff,
+    (value >> 24) & 0xff,
+  ]);
+}
+
+function concatBytes(parts) {
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  parts.forEach((part) => {
+    out.set(part, offset);
+    offset += part.length;
+  });
+  return out;
+}
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) {
+    const index = (crc ^ bytes[i]) & 0xff;
+    crc = CRC32_TABLE[index] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function guessFileExtension(url, mimeType) {
+  const type = (mimeType || "").toLowerCase();
+  if (type.includes("png")) return "png";
+  if (type.includes("jpeg") || type.includes("jpg")) return "jpg";
+  if (type.includes("webp")) return "webp";
+  if (type.includes("gif")) return "gif";
+  if (type.includes("svg")) return "svg";
+  if (type.includes("avif")) return "avif";
+  if (url) {
+    const clean = url.split("?")[0].split("#")[0];
+    const last = clean.split("/").pop();
+    if (last && last.includes(".")) {
+      return last.split(".").pop().toLowerCase();
+    }
+  }
+  return "png";
+}
+
+function guessFileName(url, index, mimeType, usedNames) {
+  let base = "";
+  if (url) {
+    const clean = url.split("?")[0].split("#")[0];
+    base = clean.split("/").pop() || "";
+  }
+  const ext = guessFileExtension(url, mimeType);
+  if (!base || !base.includes(".")) {
+    base = `image-${index + 1}.${ext}`;
+  }
+  const safeBase = base.replace(/[^\w.\-]+/g, "-");
+  const key = safeBase.toLowerCase();
+  const count = usedNames.get(key) || 0;
+  usedNames.set(key, count + 1);
+  if (count === 0) return safeBase;
+  const parts = safeBase.split(".");
+  const suffix = `-${count + 1}`;
+  if (parts.length === 1) return `${safeBase}${suffix}`;
+  return `${parts.slice(0, -1).join(".")}${suffix}.${parts.at(-1)}`;
+}
+
+function buildZip(files) {
+  const encoder = new TextEncoder();
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  files.forEach((file) => {
+    const nameBytes = encoder.encode(file.name);
+    const data = file.data;
+    const crc = crc32(data);
+    const localHeader = concatBytes([
+      uint32LE(0x04034b50),
+      uint16LE(20),
+      uint16LE(0),
+      uint16LE(0),
+      uint16LE(0),
+      uint16LE(0),
+      uint32LE(crc),
+      uint32LE(data.length),
+      uint32LE(data.length),
+      uint16LE(nameBytes.length),
+      uint16LE(0),
+    ]);
+    localParts.push(localHeader, nameBytes, data);
+    const centralHeader = concatBytes([
+      uint32LE(0x02014b50),
+      uint16LE(20),
+      uint16LE(20),
+      uint16LE(0),
+      uint16LE(0),
+      uint16LE(0),
+      uint16LE(0),
+      uint32LE(crc),
+      uint32LE(data.length),
+      uint32LE(data.length),
+      uint16LE(nameBytes.length),
+      uint16LE(0),
+      uint16LE(0),
+      uint16LE(0),
+      uint16LE(0),
+      uint32LE(0),
+      uint32LE(offset),
+    ]);
+    centralParts.push(centralHeader, nameBytes);
+    offset += localHeader.length + nameBytes.length + data.length;
+  });
+  const centralSize = centralParts.reduce(
+    (sum, part) => sum + part.length,
+    0
+  );
+  const centralOffset = offset;
+  const endRecord = concatBytes([
+    uint32LE(0x06054b50),
+    uint16LE(0),
+    uint16LE(0),
+    uint16LE(files.length),
+    uint16LE(files.length),
+    uint32LE(centralSize),
+    uint32LE(centralOffset),
+    uint16LE(0),
+  ]);
+  return new Blob([...localParts, ...centralParts, endRecord], {
+    type: "application/zip",
+  });
+}
+
+async function fetchImageBytes(url) {
+  const isHttp = /^https?:\/\//i.test(url);
+  const fetchUrl = isHttp
+    ? `/api/image-proxy?url=${encodeURIComponent(url)}`
+    : url;
+  const response = await fetch(fetchUrl);
+  if (!response.ok || response.type === "opaque") {
+    throw new Error(`Failed to fetch image: ${url}`);
+  }
+  const blob = await response.blob();
+  const data = new Uint8Array(await blob.arrayBuffer());
+  return { blob, data };
+}
+
+function getSelectedScrapeUrls() {
+  const container = $("scrapedImages");
+  if (!container) return [];
+  const selected = Array.from(
+    container.querySelectorAll('input[type="checkbox"]:checked')
+  );
+  return selected.map((el) => el.dataset.url).filter(Boolean);
+}
+
+function clearScrapeGallery() {
+  const container = $("scrapedImages");
+  if (container) container.innerHTML = "";
+  scrapedImageUrls = [];
+  updateScrapeStatus();
+}
+
+async function downloadSelectedScrapeZip() {
+  const selected = getSelectedScrapeUrls();
+  if (!selected.length) return;
+  const status = $("scrapeStatus");
+  if (status) status.textContent = "Downloading images...";
+  const files = [];
+  const failures = [];
+  const usedNames = new Map();
+  for (let i = 0; i < selected.length; i += 1) {
+    const url = selected[i];
+    try {
+      const { blob, data } = await fetchImageBytes(url);
+      const name = guessFileName(url, files.length, blob.type, usedNames);
+      files.push({ name, data });
+    } catch {
+      failures.push(url);
+    }
+  }
+  if (!files.length) {
+    showToast("Could not download selected images.", "error");
+    if (status) status.textContent = "Download failed (CORS or invalid URLs).";
+    return;
+  }
+  const zipBlob = buildZip(files);
+  const zipUrl = URL.createObjectURL(zipBlob);
+  const link = document.createElement("a");
+  link.href = zipUrl;
+  link.download = `scraped-images-${Date.now()}.zip`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(zipUrl), 1000);
+  if (failures.length) {
+    showToast(`${failures.length} image(s) failed to download.`, "error");
+  } else {
+    showToast("Downloaded selected images.");
+  }
+  if (status) {
+    status.textContent = failures.length
+      ? `${files.length} zipped, ${failures.length} failed`
+      : `${files.length} images zipped`;
+  }
+}
 
 function setLlmStatus(text, isError = false) {
   const el = $("llmStatus");
@@ -759,6 +1050,62 @@ $("btnDownloadImage").addEventListener("click", () => {
   link.download = `generated-image-${Date.now()}.png`;
   link.click();
 });
+
+const scrapeBtn = $("btnScrapeImages");
+if (scrapeBtn) {
+  scrapeBtn.addEventListener("click", () => {
+    const html = $("scrapeHtml").value || "";
+    const urls = parseImageUrlsFromHtml(html);
+    if (!urls.length) {
+      showToast("No images found in HTML.", "error");
+    }
+    renderScrapedImages(urls);
+  });
+}
+
+const scrapeRefreshBtn = $("btnRefreshScrape");
+if (scrapeRefreshBtn) {
+  scrapeRefreshBtn.addEventListener("click", () => {
+    const html = $("scrapeHtml").value || "";
+    const urls = parseImageUrlsFromHtml(html);
+    renderScrapedImages(urls);
+  });
+}
+
+const scrapeClearBtn = $("btnClearScrape");
+if (scrapeClearBtn) {
+  scrapeClearBtn.addEventListener("click", () => {
+    const input = $("scrapeHtml");
+    if (input) input.value = "";
+    clearScrapeGallery();
+  });
+}
+
+const scrapeSelectAllBtn = $("btnSelectAllScraped");
+if (scrapeSelectAllBtn) {
+  scrapeSelectAllBtn.addEventListener("click", () => {
+    const container = $("scrapedImages");
+    if (!container) return;
+    const checks = Array.from(
+      container.querySelectorAll('input[type="checkbox"]')
+    );
+    if (!checks.length) return;
+    const allSelected = checks.every((el) => el.checked);
+    checks.forEach((el) => {
+      el.checked = !allSelected;
+    });
+    updateScrapeStatus();
+  });
+}
+
+const scrapeDownloadBtn = $("btnDownloadScrapedZip");
+if (scrapeDownloadBtn) {
+  scrapeDownloadBtn.addEventListener("click", () => {
+    downloadSelectedScrapeZip().catch(() => {
+      showToast("Failed to build zip.", "error");
+    });
+  });
+}
 
 // Main Init
 (async () => {
