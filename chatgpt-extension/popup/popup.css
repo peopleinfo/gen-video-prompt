@@ -149,6 +149,42 @@ h1 {
   gap: 8px;
 }
 
+.queue-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.queue-controls label {
+  font-size: 12px;
+  color: #a1a1aa;
+}
+
+.queue-controls input {
+  width: 80px;
+  padding: 6px 8px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #2a2a4a;
+  color: #eee;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.section-label {
+  font-size: 12px;
+  color: #a1a1aa;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.inline-status {
+  min-height: 16px;
+  font-size: 12px;
+  color: #10b981;
+}
+
 .gallery {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

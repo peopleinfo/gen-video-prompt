@@ -36,6 +36,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initTabs();
   await restoreChatState();
   await restorePromptState();
+  await restoreQueueState();
   loadGallery();
 
   document
@@ -51,6 +52,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     .getElementById("sendPrompt")
     .addEventListener("click", () => sendPromptMessage("send-prompt"));
   document
+    .getElementById("sendPromptQueue")
+    .addEventListener("click", sendPromptQueue);
+  document
     .getElementById("useChatOutput")
     .addEventListener("click", useChatOutputAsPrompt);
   document.getElementById("openApi").addEventListener("click", openApiTab);
@@ -63,6 +67,21 @@ document.addEventListener("DOMContentLoaded", async () => {
   const promptInput = document.getElementById("promptInput");
   promptInput.addEventListener("input", () => {
     savePromptState(promptInput.value);
+  });
+
+  const queuePromptInput = document.getElementById("queuePromptInput");
+  queuePromptInput.addEventListener("input", () => {
+    saveQueueState({ template: queuePromptInput.value });
+  });
+
+  const queueCount = document.getElementById("queueCount");
+  queueCount.addEventListener("input", () => {
+    saveQueueState({ count: queueCount.value });
+  });
+
+  const queueInterval = document.getElementById("queueInterval");
+  queueInterval.addEventListener("input", () => {
+    saveQueueState({ interval: queueInterval.value });
   });
 });
 
@@ -286,20 +305,7 @@ async function sendPromptMessage(type) {
     return;
   }
 
-  const [activeTab] = await chrome.tabs.query({
-    active: true,
-    currentWindow: true,
-  });
-
-  let targetTab = null;
-  if (activeTab && isChatGptUrl(activeTab.url)) {
-    targetTab = activeTab;
-  } else {
-    const matchingTabs = await chrome.tabs.query({
-      url: ["https://chatgpt.com/*", "https://chat.openai.com/*"],
-    });
-    targetTab = matchingTabs[0] || null;
-  }
+  const targetTab = await getChatGptTab();
 
   if (!targetTab || !targetTab.id) {
     showStatus("Open ChatGPT to send prompts");
@@ -316,6 +322,85 @@ async function sendPromptMessage(type) {
     console.error("Send prompt error:", error);
     showStatus("Refresh ChatGPT tab and try again");
   }
+}
+
+async function sendPromptQueue() {
+  const promptInput = document.getElementById("promptInput");
+  const queuePromptInput = document.getElementById("queuePromptInput");
+  const queueCount = document.getElementById("queueCount");
+  const queueInterval = document.getElementById("queueInterval");
+
+  const queueText = (queuePromptInput.value || "").trim();
+  if (!queueText) {
+    showStatus("Enter queue text first");
+    return;
+  }
+
+  const total = Math.max(1, parseInt(queueCount.value, 10) || 0);
+  const intervalSeconds = Math.max(
+    0,
+    Number.isFinite(Number(queueInterval.value))
+      ? Number(queueInterval.value)
+      : 0
+  );
+  const intervalMs = Math.round(intervalSeconds * 1000);
+
+  const targetTab = await getChatGptTab();
+  if (!targetTab || !targetTab.id) {
+    showStatus("Open ChatGPT to send prompts");
+    return;
+  }
+
+  setQueueStatus("Queue started");
+  for (let i = 1; i <= total; i += 1) {
+    const queueSuffix = queueText.replace(/\{numOfQueue\}/g, String(i));
+    const composedText = queueSuffix;
+    if (!composedText) {
+      showStatus("Queue prompt is empty");
+      return;
+    }
+
+    try {
+      await chrome.tabs.sendMessage(targetTab.id, {
+        type: "send-prompt",
+        text: composedText,
+      });
+      showStatus(`Sent ${i} of ${total}`);
+      setQueueStatus(`Sent ${i} of ${total}`);
+    } catch (error) {
+      console.error("Send queue error:", error);
+      showStatus("Refresh ChatGPT tab and try again");
+      setQueueStatus("Queue failed");
+      return;
+    }
+
+    if (i < total && intervalMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  showStatus("Queue complete");
+  setQueueStatus("Queue complete");
+}
+
+function setQueueStatus(message) {
+  const status = document.getElementById("queueStatus");
+  if (!status) return;
+  status.textContent = message;
+}
+
+async function getChatGptTab() {
+  const [activeTab] = await chrome.tabs.query({
+    active: true,
+    currentWindow: true,
+  });
+  if (activeTab && isChatGptUrl(activeTab.url)) {
+    return activeTab;
+  }
+  const matchingTabs = await chrome.tabs.query({
+    url: ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+  });
+  return matchingTabs[0] || null;
 }
 
 async function fillPromptWithLlm() {
@@ -404,6 +489,24 @@ async function restorePromptState() {
   promptInput.value = promptInputValue;
 }
 
+async function restoreQueueState() {
+  const {
+    queuePromptValue = "",
+    queueCountValue = "3",
+    queueIntervalValue = "5",
+  } = await chrome.storage.local.get([
+    "queuePromptValue",
+    "queueCountValue",
+    "queueIntervalValue",
+  ]);
+  const queuePromptInput = document.getElementById("queuePromptInput");
+  const queueCount = document.getElementById("queueCount");
+  const queueInterval = document.getElementById("queueInterval");
+  queuePromptInput.value = queuePromptValue;
+  queueCount.value = queueCountValue;
+  queueInterval.value = queueIntervalValue;
+}
+
 function saveChatState({ prompt, output }) {
   const data = {};
   if (typeof prompt === "string") data.chatPromptValue = prompt;
@@ -415,6 +518,16 @@ function saveChatState({ prompt, output }) {
 
 function savePromptState(value) {
   chrome.storage.local.set({ promptInputValue: value });
+}
+
+function saveQueueState({ template, count, interval }) {
+  const data = {};
+  if (typeof template === "string") data.queuePromptValue = template;
+  if (typeof count === "string") data.queueCountValue = count;
+  if (typeof interval === "string") data.queueIntervalValue = interval;
+  if (Object.keys(data).length > 0) {
+    chrome.storage.local.set(data);
+  }
 }
 
 function useChatOutputAsPrompt() {
