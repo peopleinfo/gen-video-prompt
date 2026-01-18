@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -21,7 +21,7 @@
           role="tab"
           aria-selected="true"
         >
-          Prompt 
+          Prompt
         </button>
         <button
           class="tab"
@@ -59,8 +59,10 @@
         role="tabpanel"
       >
         <div class="prompt-box">
-          <div class="section-label">Prompt, Read movie and remember main actor i will ask for generate first frame image later now now
-</div>
+          <div class="section-label">
+            Prompt, Read movie and remember main actor i will ask for generate
+            first frame image later now now
+          </div>
           <textarea
             id="promptInput"
             placeholder="Type a prompt to send to ChatGPT..."
@@ -78,18 +80,27 @@
         </div>
 
         <div class="prompt-box">
-          <div class="section-label">Send Queue, e. give first frame image  part {numOfQueue} only one main actor in frame. eg. i correct you plz don't give me two pic in one images</div>
+          <div class="section-label">
+            Send Queue, e. give first frame image part {numOfQueue} only one
+            main actor in frame. eg. i correct you plz don't give me two pic in
+            one images
+          </div>
           <textarea
             id="queuePromptInput"
             placeholder="Queue prompt suffix. Use {numOfQueue} to insert the queue number."
             rows="3"
-            
           ></textarea>
           <div class="queue-controls">
             <label for="queueCount">Queue count</label>
             <input id="queueCount" type="number" min="1" value="3" />
             <label for="queueInterval">Interval (sec)</label>
-            <input id="queueInterval" type="number" min="0" step="0.5" value="5" />
+            <input
+              id="queueInterval"
+              type="number"
+              min="0"
+              step="0.5"
+              value="5"
+            />
           </div>
           <div class="prompt-actions">
             <button id="sendPromptQueue" class="btn btn-primary">
@@ -119,10 +130,19 @@
             <button id="clearScrape" class="btn btn-danger" type="button">
               Clear
             </button>
-            <button id="selectAllScrape" class="btn btn-secondary" type="button">
+            <button
+              id="selectAllScrape"
+              class="btn btn-secondary"
+              type="button"
+            >
               Select all
             </button>
-            <button id="downloadScrapeZip" class="btn btn-primary" type="button" disabled>
+            <button
+              id="downloadScrapeZip"
+              class="btn btn-primary"
+              type="button"
+              disabled
+            >
               Download selected
             </button>
             <div id="scrapeStatus" class="inline-status"></div>
@@ -185,7 +205,11 @@
               type="text"
               placeholder="https://example.com"
             />
-            <button id="cookieUseActive" class="btn btn-secondary" type="button">
+            <button
+              id="cookieUseActive"
+              class="btn btn-secondary"
+              type="button"
+            >
               Use active tab
             </button>
             <button id="cookieRefresh" class="btn btn-primary" type="button">
