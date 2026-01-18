@@ -1,8 +1,11 @@
 let chatAbortController = null;
+let queueAbortController = null;
 let setActiveTab = () => {};
 let currentCookies = [];
 let currentRenderedCookies = [];
 let isQueueRunning = false;
+let isSending = false;
+let stopRequested = false;
 let extensionQueuePollTimer = null;
 let extensionQueuePollInFlight = false;
 let scrapedImageUrls = [];
@@ -56,6 +59,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindClick("sendPrompt", () => sendPromptMessage("send-prompt"));
   bindClick("sendPromptAndQueue", sendPromptAndQueue);
   bindClick("sendPromptQueue", sendPromptQueue);
+  bindClick("cancelQueue", cancelQueue);
+  bindClick("cancelSend", handleGlobalCancel);
   bindClick("useChatOutput", useChatOutputAsPrompt);
   bindClick("openApi", openApiTab);
 
@@ -65,6 +70,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   bindInput("promptInput", (value) => {
     savePromptState(value);
+    updateQueueCountFromPrompt(value);
+  });
+
+  bindInput("imageDelay", (value) => {
+    chrome.storage.local.set({ promptImageDelay: value });
+  });
+
+  bindInput("headPromptInput", (value) => {
+    chrome.storage.local.set({ headPromptInputValue: value });
   });
 
   bindInput("queuePromptInput", (value) => {
@@ -85,6 +99,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindClick("clearScrape", clearScrapeGallery);
   bindClick("selectAllScrape", toggleSelectAllScrape);
   bindClick("downloadScrapeZip", downloadScrapeZip);
+
+  const imageInput = document.getElementById("imageInput");
+  if (imageInput) {
+    imageInput.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      const preview = document.getElementById("imagePreviewName");
+      if (preview) {
+        preview.textContent = file ? file.name : "";
+      }
+      const headPromptInput = document.getElementById("headPromptInput");
+      if (file && headPromptInput) {
+        headPromptInput.value = `Read short movie and remember main actor, no need explain me back just remember and say I remember main actor is {mainActor} and wait for my next prompt will ask to generate main actor image`;
+        headPromptInput.dispatchEvent(new Event("input"));
+      }
+    });
+  }
 });
 
 function bindClick(id, handler) {
@@ -134,6 +164,22 @@ function initTabs() {
   activate("prompt");
 }
 
+function updateQueueCountFromPrompt(text) {
+  if (!text) return;
+  // Look for "Part N" pattern (case-insensitive)
+  const matches = [...text.matchAll(/\bPart\s+(\d+)/gi)];
+  if (matches.length > 0) {
+    const maxPart = Math.max(...matches.map((m) => parseInt(m[1], 10)));
+    if (maxPart > 0) {
+      const queueCount = document.getElementById("queueCount");
+      if (queueCount) {
+        queueCount.value = String(maxPart);
+        saveQueueState({ count: String(maxPart) });
+      }
+    }
+  }
+}
+
 async function loadGallery() {
   const result = await chrome.storage.local.get(["generatedImages"]);
   const images = result.generatedImages || [];
@@ -153,6 +199,12 @@ async function loadGallery() {
     <div class="gallery-item" data-index="${index}">
       <img src="${img.dataUrl}" alt="${img.preset}">
       <span class="label">${img.preset}</span>
+      <button class="copy-btn" data-index="${index}" title="Copy Image + Text">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>
+      </button>
       <button class="delete-btn" data-index="${index}">&times;</button>
     </div>
   `,
@@ -165,6 +217,38 @@ async function loadGallery() {
       deleteImage(parseInt(btn.dataset.index));
     });
   });
+
+  gallery.querySelectorAll(".copy-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handleCopyImageAndText(parseInt(btn.dataset.index));
+    });
+  });
+}
+
+async function handleCopyImageAndText(index) {
+  const result = await chrome.storage.local.get(["generatedImages"]);
+  const images = result.generatedImages || [];
+  const img = images[index];
+  if (!img) return;
+
+  try {
+    const response = await fetch(img.dataUrl);
+    const blob = await response.blob();
+    const textBlob = new Blob([img.preset || ""], { type: "text/plain" });
+
+    const clipboardItemInput = {};
+    clipboardItemInput[blob.type] = blob;
+    clipboardItemInput["text/plain"] = textBlob;
+
+    const item = new ClipboardItem(clipboardItemInput);
+    await navigator.clipboard.write([item]);
+
+    showStatus("Copied Image + Text!");
+  } catch (err) {
+    console.error("Copy failed:", err);
+    showStatus("Copy failed: " + err.message);
+  }
 }
 
 async function deleteImage(index) {
@@ -306,22 +390,102 @@ async function sendChat() {
   }
 }
 
+function updateButtons() {
+  const sendBtn = document.getElementById("sendPrompt");
+  const sendQueueBtn = document.getElementById("sendPromptQueue");
+  const sendAndQueueBtn = document.getElementById("sendPromptAndQueue");
+  const cancelQueueBtn = document.getElementById("cancelQueue");
+  const cancelSendBtn = document.getElementById("cancelSend");
+
+  const running = isQueueRunning || isSending;
+
+  if (sendBtn) sendBtn.disabled = running;
+  if (sendQueueBtn) sendQueueBtn.disabled = running;
+  if (sendAndQueueBtn) sendAndQueueBtn.disabled = running;
+
+  // cancelQueue is specifically for queue, but we can enable it if queue is running
+  if (cancelQueueBtn) cancelQueueBtn.disabled = !isQueueRunning;
+
+  // cancelSend is global stop
+  if (cancelSendBtn) cancelSendBtn.disabled = !running;
+}
+
+async function handleGlobalCancel() {
+  stopRequested = true;
+  if (queueAbortController) {
+    queueAbortController.abort();
+  }
+
+  // Send cancel message to tab
+  const targetTab = await getChatGptTab();
+  if (targetTab && targetTab.id) {
+    chrome.tabs
+      .sendMessage(targetTab.id, { type: "cancel-send" })
+      .catch(() => {});
+  }
+
+  // Force reset state if needed (though finally blocks should handle it)
+  // But if we are stuck in a non-cancellable await (like sendMessage response), we might need to rely on finally
+  // However, sendMessage is not abortable from here, so we just signal the content script.
+  showStatus("Cancellation sent");
+}
+
+function cancelQueue() {
+  handleGlobalCancel();
+}
+
 async function sendPromptMessage(type, overrideText) {
+  if (isSending || isQueueRunning) return;
+  stopRequested = false;
+
   const promptInput = document.getElementById("promptInput");
-  const text = (overrideText ?? promptInput.value ?? "").trim();
+  const headPromptInput = document.getElementById("headPromptInput");
+  const headText = (headPromptInput ? headPromptInput.value : "").trim();
+  const rawText = (overrideText ?? promptInput.value ?? "").trim();
+  const text = headText ? `${headText}\n${rawText}`.trim() : rawText;
+
   if (!text) {
     showStatus("Enter a prompt first");
     return;
   }
 
-  const targetTab = await getChatGptTab();
+  isSending = true;
+  updateButtons();
 
-  if (!targetTab || !targetTab.id) {
-    showStatus("Open ChatGPT to send prompts");
-    return;
-  }
+  // Check for image input
+  const imageInput = document.getElementById("imageInput");
+  const file = imageInput && imageInput.files ? imageInput.files[0] : null;
 
   try {
+    if (file) {
+      showStatus("Processing image...");
+      try {
+        const { copied, usedImage } = await copyTextWithOptionalImage(
+          text,
+          file,
+        );
+        if (copied && usedImage) {
+          showStatus("Copied! Paste (Ctrl+V) in ChatGPT");
+          const targetTab = await getChatGptTab();
+          if (targetTab && targetTab.id) {
+            chrome.tabs.update(targetTab.id, { active: true });
+          }
+          return;
+        }
+        showStatus("Image copy failed. Sending text...");
+      } catch (e) {
+        console.error("Clipboard error:", e);
+        showStatus("Clipboard error. Sending text...");
+      }
+    }
+
+    const targetTab = await getChatGptTab();
+
+    if (!targetTab || !targetTab.id) {
+      showStatus("Open ChatGPT to send prompts");
+      return;
+    }
+
     await chrome.tabs.sendMessage(targetTab.id, {
       type,
       text,
@@ -330,7 +494,51 @@ async function sendPromptMessage(type, overrideText) {
   } catch (error) {
     console.error("Send prompt error:", error);
     showStatus("Refresh ChatGPT tab and try again");
+  } finally {
+    isSending = false;
+    updateButtons();
   }
+}
+
+function updateQueueButtons(running) {
+  // Deprecated, use updateButtons.
+  // Kept for compatibility if called from elsewhere, but we should replace calls.
+  updateButtons();
+}
+
+function waitWithCountdown(ms, updateCallback, abortSignal) {
+  return new Promise((resolve, reject) => {
+    if (ms <= 0) {
+      resolve();
+      return;
+    }
+
+    const start = Date.now();
+    const end = start + ms;
+
+    const tick = () => {
+      if (abortSignal && abortSignal.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      if (stopRequested) {
+        reject(new DOMException("Cancelled", "AbortError"));
+        return;
+      }
+
+      const now = Date.now();
+      const remaining = Math.ceil((end - now) / 1000);
+
+      if (remaining <= 0) {
+        resolve();
+      } else {
+        updateCallback(remaining);
+        setTimeout(tick, 200);
+      }
+    };
+
+    tick();
+  });
 }
 
 async function sendPromptQueue() {
@@ -338,19 +546,24 @@ async function sendPromptQueue() {
     showStatus("Queue already running");
     return;
   }
-  isQueueRunning = true;
+  stopRequested = false;
+
   const promptInput = document.getElementById("promptInput");
   const queuePromptInput = document.getElementById("queuePromptInput");
   const queueCount = document.getElementById("queueCount");
   const queueInterval = document.getElementById("queueInterval");
 
-  try {
-    const queueText = (queuePromptInput.value || "").trim();
-    if (!queueText) {
-      showStatus("Enter queue text first");
-      return;
-    }
+  const queueText = (queuePromptInput.value || "").trim();
+  if (!queueText) {
+    showStatus("Enter queue text first");
+    return;
+  }
 
+  isQueueRunning = true;
+  queueAbortController = new AbortController();
+  updateButtons();
+
+  try {
     const total = Math.max(1, parseInt(queueCount.value, 10) || 0);
     const intervalSeconds = Math.max(
       0,
@@ -368,15 +581,30 @@ async function sendPromptQueue() {
 
     setQueueStatus("Queue started");
     for (let i = 1; i <= total; i += 1) {
+      if (queueAbortController.signal.aborted) break;
+
       if (intervalMs > 0) {
-        setQueueStatus(`Waiting ${intervalSeconds}s before ${i} of ${total}`);
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        try {
+          await waitWithCountdown(
+            intervalMs,
+            (remaining) => {
+              setQueueStatus(`Waiting ${remaining}s before ${i} of ${total}`);
+            },
+            queueAbortController.signal,
+          );
+        } catch (err) {
+          if (err.name === "AbortError") break;
+          throw err;
+        }
       }
+
+      if (queueAbortController.signal.aborted) break;
+
       const queueSuffix = queueText.replace(/\{numOfQueue\}/g, String(i));
       const composedText = queueSuffix;
       if (!composedText) {
         showStatus("Queue prompt is empty");
-        return;
+        break;
       }
 
       try {
@@ -394,44 +622,137 @@ async function sendPromptQueue() {
       }
     }
 
-    showStatus("Queue complete");
-    setQueueStatus("Queue complete");
+    if (queueAbortController.signal.aborted) {
+      showStatus("Queue stopped");
+      setQueueStatus("Queue stopped");
+    } else {
+      showStatus("Queue complete");
+      setQueueStatus("Queue complete");
+    }
+  } catch (err) {
+    console.error("Queue error:", err);
+    setQueueStatus("Queue error");
   } finally {
     isQueueRunning = false;
+    queueAbortController = null;
+    updateButtons();
   }
 }
 
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 async function sendPromptAndQueue() {
-  if (isQueueRunning) {
-    showStatus("Queue already running");
+  if (isQueueRunning || isSending) {
+    showStatus("Already running");
     return;
   }
+  stopRequested = false;
+
   const promptInput = document.getElementById("promptInput");
-  const mainText = (promptInput.value || "").trim();
-  if (!mainText) {
+  const headPromptInput = document.getElementById("headPromptInput");
+  const headText = (headPromptInput ? headPromptInput.value : "").trim();
+  const rawMainText = (promptInput.value || "").trim();
+  const mainText = headText
+    ? `${headText}\n${rawMainText}`.trim()
+    : rawMainText;
+
+  const imageInput = document.getElementById("imageInput");
+  const hasImage =
+    imageInput && imageInput.files && imageInput.files.length > 0;
+
+  if (!hasImage && !mainText) {
     showStatus("Enter a prompt first");
     return;
   }
 
-  const targetTab = await getChatGptTab();
-  if (!targetTab || !targetTab.id) {
-    showStatus("Open ChatGPT to send prompts");
-    return;
-  }
+  isSending = true;
+  updateButtons();
 
   try {
-    await chrome.tabs.sendMessage(targetTab.id, {
-      type: "send-prompt",
-      text: mainText,
-    });
-    showStatus("Main prompt sent");
-  } catch (error) {
-    console.error("Send main prompt error:", error);
-    showStatus("Refresh ChatGPT tab and try again");
-    return;
+    const targetTab = await getChatGptTab();
+    if (!targetTab || !targetTab.id) {
+      showStatus("Open ChatGPT to send prompts");
+      return;
+    }
+
+    // Handle optional image for the main prompt
+    const imageInput = document.getElementById("imageInput");
+    const file = imageInput && imageInput.files ? imageInput.files[0] : null;
+
+    if (file) {
+      showStatus("Uploading image...");
+      try {
+        const base64Data = await readFileAsDataURL(file);
+        if (stopRequested) throw new Error("Cancelled");
+
+        const imageDelayInput = document.getElementById("imageDelay");
+        const delaySeconds = imageDelayInput
+          ? parseFloat(imageDelayInput.value)
+          : 30;
+        const delayMs = delaySeconds * 1000;
+
+        await Promise.all([
+          chrome.tabs.sendMessage(targetTab.id, {
+            type: "send-prompt-with-image",
+            text: mainText,
+            fileData: base64Data,
+            fileName: file.name,
+            fileType: file.type,
+            delayMs: delayMs,
+          }),
+          waitWithCountdown(
+            delayMs,
+            (remaining) => {
+              showStatus(`Uploading & Waiting... ${remaining}s`);
+            },
+            null, // No separate abort signal needed, stopRequested check in tick handles it
+          ),
+        ]);
+
+        if (stopRequested) throw new Error("Cancelled");
+        showStatus("Main prompt sent");
+      } catch (e) {
+        if (e.message === "Cancelled") {
+          showStatus("Cancelled");
+          return;
+        }
+        console.error("Image send error:", e);
+        showStatus("Error sending image. Try manual copy.");
+        return;
+      }
+    } else {
+      try {
+        if (stopRequested) throw new Error("Cancelled");
+        await chrome.tabs.sendMessage(targetTab.id, {
+          type: "send-prompt",
+          text: mainText,
+        });
+        showStatus("Main prompt sent");
+      } catch (error) {
+        if (error.message === "Cancelled") {
+          showStatus("Cancelled");
+          return;
+        }
+        console.error("Send main prompt error:", error);
+        showStatus("Refresh ChatGPT tab and try again");
+        return;
+      }
+    }
+  } finally {
+    isSending = false;
+    updateButtons();
   }
 
-  await sendPromptQueue();
+  if (!stopRequested) {
+    await sendPromptQueue();
+  }
 }
 
 function startExtensionQueuePolling() {
@@ -471,6 +792,9 @@ function applyExtensionQueueItem(item) {
   if (promptInput && typeof item.prompt === "string") {
     promptInput.value = item.prompt;
     savePromptState(item.prompt);
+    if (!Number.isFinite(item.queueCount)) {
+      updateQueueCountFromPrompt(item.prompt);
+    }
   }
   const queuePromptInput = document.getElementById("queuePromptInput");
   if (queuePromptInput && typeof item.queueTemplate === "string") {
@@ -566,6 +890,7 @@ async function fillPromptWithLlm() {
 
     promptInput.value = resultText;
     savePromptState(resultText);
+    updateQueueCountFromPrompt(resultText);
     showStatus("Prompt filled");
   } catch (error) {
     console.error("Fill prompt error:", error);
@@ -589,18 +914,28 @@ async function restoreChatState() {
 }
 
 async function restorePromptState() {
-  const { promptInputValue = "" } = await chrome.storage.local.get([
+  const {
+    promptInputValue = "",
+    promptImageDelay = "20",
+    headPromptInputValue = "",
+  } = await chrome.storage.local.get([
     "promptInputValue",
+    "promptImageDelay",
+    "headPromptInputValue",
   ]);
   const promptInput = document.getElementById("promptInput");
   promptInput.value = promptInputValue;
+  const headPromptInput = document.getElementById("headPromptInput");
+  if (headPromptInput) headPromptInput.value = headPromptInputValue;
+  const imageDelay = document.getElementById("imageDelay");
+  if (imageDelay) imageDelay.value = promptImageDelay;
 }
 
 async function restoreQueueState() {
   const {
-    queuePromptValue = "",
+    queuePromptValue = "give first frame image part {numOfQueue} only one main actor in frame. eg. i correct you plz don't give me two pic in one images",
     queueCountValue = "3",
-    queueIntervalValue = "5",
+    queueIntervalValue = "20",
   } = await chrome.storage.local.get([
     "queuePromptValue",
     "queueCountValue",
@@ -649,6 +984,7 @@ function useChatOutputAsPrompt() {
 
   promptInput.value = text;
   savePromptState(text);
+  updateQueueCountFromPrompt(text);
   setActiveTab("prompt");
   promptInput.focus();
   showStatus("Response moved to Prompt");
@@ -976,6 +1312,62 @@ function parseImageUrlsFromHtml(html) {
   });
 }
 
+function getPromptParts(text) {
+  if (!text) return [];
+  // Match "Part N..." blocks
+  const matches = text.match(/(Part\s+\d+[\s\S]*?)(?=\bPart\s+\d+|$)/gi);
+  if (!matches || matches.length === 0) {
+    return [text];
+  }
+  return matches;
+}
+
+async function handleCopyScrapedImage(url, index) {
+  try {
+    const promptInput = document.getElementById("promptInput");
+    const rawText = promptInput ? promptInput.value : "";
+    const parts = getPromptParts(rawText);
+
+    const imageInput = document.getElementById("imageInput");
+    const hasImage =
+      imageInput && imageInput.files && imageInput.files.length > 0;
+
+    let textToCopy = "";
+
+    if (hasImage) {
+      if (index === 0) {
+        textToCopy = "Main Actor / Reference Image";
+      } else {
+        const partIndex = index - 1;
+        if (partIndex >= 0 && partIndex < parts.length) {
+          textToCopy = parts[partIndex];
+        }
+      }
+    } else {
+      if (index >= 0 && index < parts.length) {
+        textToCopy = parts[index];
+      }
+    }
+
+    // Fetch image data
+    const { data, mimeType } = await fetchImageData(url);
+    const blob = new Blob([data], { type: mimeType });
+    const textBlob = new Blob([textToCopy], { type: "text/plain" });
+
+    const clipboardItemInput = {};
+    clipboardItemInput[blob.type] = blob;
+    clipboardItemInput["text/plain"] = textBlob;
+
+    const item = new ClipboardItem(clipboardItemInput);
+    await navigator.clipboard.write([item]);
+
+    showStatus("Copied Image + Text!");
+  } catch (err) {
+    console.error("Copy scrape failed:", err);
+    showStatus("Copy failed: " + err.message);
+  }
+}
+
 function renderScrapeGallery(urls, selectedUrlSet = null) {
   scrapedImageUrls = urls;
   const gallery = document.getElementById("scrapeGallery");
@@ -994,12 +1386,29 @@ function renderScrapeGallery(urls, selectedUrlSet = null) {
       <input type="checkbox" data-url="${url}" ${isChecked ? "checked" : ""}>
       <img src="${url}" alt="Scraped image">
       <div class="scrape-url">${url}</div>
+      <button class="copy-btn" data-index="${index}" title="Copy Image + Text" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>
+      </button>
     </label>
   `;
     })
     .join("");
   gallery.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
     checkbox.addEventListener("change", updateScrapeStatus);
+  });
+
+  gallery.querySelectorAll(".copy-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handleCopyScrapedImage(
+        scrapedImageUrls[parseInt(btn.dataset.index)],
+        parseInt(btn.dataset.index),
+      );
+    });
   });
 
   gallery.querySelectorAll(".scrape-item").forEach((item) => {
@@ -1449,4 +1858,87 @@ function crc32(bytes) {
     }
   }
   return (crc ^ 0xffffffff) >>> 0;
+}
+
+async function copyTextWithOptionalImage(text, imageFile) {
+  if (!text) return { copied: false, usedImage: false };
+  if (!imageFile) {
+    await navigator.clipboard.writeText(text);
+    return { copied: true, usedImage: false };
+  }
+  const canWrite =
+    navigator.clipboard?.write && typeof ClipboardItem !== "undefined";
+  if (!canWrite) {
+    await navigator.clipboard.writeText(text);
+    return { copied: true, usedImage: false };
+  }
+  const prepared = await normalizeImageForClipboard(imageFile);
+  const mimeType = prepared.type || "image/png";
+  if (ClipboardItem.supports && !ClipboardItem.supports(mimeType)) {
+    await navigator.clipboard.writeText(text);
+    return { copied: true, usedImage: false };
+  }
+  const safeText = escapeHtml(text).replaceAll("\n", "<br>");
+  const html = `<p>${safeText}</p>`;
+  await navigator.clipboard.write([
+    new ClipboardItem({
+      "text/plain": new Blob([text], { type: "text/plain" }),
+      "text/html": new Blob([html], { type: "text/html" }),
+      [mimeType]: prepared,
+    }),
+  ]);
+  return { copied: true, usedImage: true };
+}
+
+async function normalizeImageForClipboard(file) {
+  const mimeType = file.type || "image/png";
+  if (mimeType === "image/png") return file;
+  if (typeof createImageBitmap === "function") {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to render image.");
+    ctx.drawImage(bitmap, 0, 0);
+    if (bitmap.close) bitmap.close();
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Failed to encode image."));
+      }, "image/png");
+    });
+  }
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  try {
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to render image.");
+    ctx.drawImage(img, 0, 0);
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Failed to encode image."));
+      }, "image/png");
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }

@@ -59,9 +59,42 @@
         role="tabpanel"
       >
         <div class="prompt-box">
-          <div class="section-label">
-            Prompt, Read movie and remember main actor i will ask for generate
-            first frame image later now now
+          <div class="section-label">Head Prompt</div>
+          <textarea
+            id="headPromptInput"
+            rows="2"
+            placeholder="Head prompt (Default: Read movie and remember main actor) and don't explain me back just remember and wait for my next prompt"
+            style="margin-bottom: 8px"
+          ></textarea>
+          <div class="file-input-container">
+            <input type="file" id="imageInput" accept="image/*" />
+            <div id="imagePreviewName" class="file-name"></div>
+          </div>
+          <div
+            style="
+              margin-bottom: 8px;
+              display: flex;
+              align-items: center;
+              gap: 8px;
+            "
+          >
+            <label for="imageDelay" style="font-size: 12px; color: #888"
+              >Image Wait (s):</label
+            >
+            <input
+              type="number"
+              id="imageDelay"
+              min="0"
+              value="20"
+              style="
+                width: 60px;
+                padding: 4px;
+                border-radius: 4px;
+                border: 1px solid #444;
+                background: #222;
+                color: #eee;
+              "
+            />
           </div>
           <textarea
             id="promptInput"
@@ -76,12 +109,15 @@
             <button id="sendPromptAndQueue" class="btn btn-secondary">
               Send Prompt + Queue
             </button>
+            <button id="cancelSend" class="btn btn-danger" disabled>
+              Stop
+            </button>
           </div>
         </div>
 
         <div class="prompt-box">
           <div class="section-label">
-            Send Queue, e. give first frame image part {numOfQueue} only one
+            Send Queue, eg. give first frame image part {numOfQueue} only one
             main actor in frame. eg. i correct you plz don't give me two pic in
             one images
           </div>
@@ -89,6 +125,7 @@
             id="queuePromptInput"
             placeholder="Queue prompt suffix. Use {numOfQueue} to insert the queue number."
             rows="3"
+            value="Give first frame image part {numOfQueue} only one main actor in frame. eg. i correct you plz don't give me two pic in one images"
           ></textarea>
           <div class="queue-controls">
             <label for="queueCount">Queue count</label>
@@ -99,28 +136,31 @@
               type="number"
               min="0"
               step="0.5"
-              value="5"
+              value="25"
             />
           </div>
           <div class="prompt-actions">
             <button id="sendPromptQueue" class="btn btn-primary">
               Send Queue
             </button>
+            <button id="cancelQueue" class="btn btn-danger" disabled>
+              Stop Queue
+            </button>
           </div>
           <div id="queueStatus" class="inline-status"></div>
         </div>
 
         <div class="prompt-box">
-          <div class="section-label">Scrape images</div>
+          <!-- <div class="section-label">Scrape images</div>
           <textarea
             id="scrapeHtml"
             placeholder="Paste HTML with <img> tags or og:image meta tags"
             rows="4"
-          ></textarea>
+          ></textarea> -->
           <div class="scrape-actions">
-            <button id="scrapeImages" class="btn btn-secondary" type="button">
+            <!-- <button id="scrapeImages" class="btn btn-secondary" type="button">
               Scrape
-            </button>
+            </button> -->
             <button id="scrapeFromDom" class="btn btn-secondary" type="button">
               Scrape page
             </button>

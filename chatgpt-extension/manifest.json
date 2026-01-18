@@ -9,13 +9,13 @@
     "tabs",
     "cookies",
     "downloads",
-    "sidePanel"
+    "sidePanel",
+    "clipboardWrite"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
-    "https://localhost:3333/*",
-    "<all_urls>"
+    "https://localhost:3333/*"
   ],
   "action": {
     "default_title": "Prompt Chat",
