@@ -595,6 +595,26 @@ $("btnCopyOutput").addEventListener("click", async () => {
   }
 });
 
+$("btnSendToExtension").addEventListener("click", async () => {
+  const text = ($("output").textContent || "").trim();
+  if (!text) {
+    showToast("No output to send.", "error");
+    return;
+  }
+  try {
+    await api("/api/extension/queue", {
+      method: "POST",
+      body: JSON.stringify({ prompt: text }),
+    });
+    showToast("Sent to extension.");
+  } catch (error) {
+    showToast(
+      error && error.message ? error.message : "Failed to send to extension.",
+      "error"
+    );
+  }
+});
+
 $("btnGetPrompt").addEventListener("click", async () => {
   $("status").textContent = "Loading...";
   try {

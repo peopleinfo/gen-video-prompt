@@ -13,6 +13,15 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 type JsonRecord = Record<string, unknown>;
 
+type ExtensionQueueItem = {
+  id: string;
+  prompt: string;
+  queueTemplate?: string;
+  queueCount?: number;
+  queueIntervalSeconds?: number;
+  createdAt: number;
+};
+
 const ROOT_DIR = process.cwd();
 const HOST = process.env.HOST ?? "127.0.0.1";
 const PORT = Number(process.env.PORT ?? "3333");
@@ -33,6 +42,8 @@ const G4F_RELEASE_BASE = `https://github.com/xtekky/gpt4free/releases/download/$
 const PUBLIC_DIR = path.join(ROOT_DIR, "src", "gui", "public");
 const MCP_SERVER_PATH = path.join(ROOT_DIR, "dist", "server.js");
 const MCP_SERVER_SRC_PATH = path.join(ROOT_DIR, "src", "server.ts");
+
+let extensionQueue: ExtensionQueueItem | null = null;
 
 function json(
   res: http.ServerResponse,
@@ -1976,6 +1987,53 @@ async function main(): Promise<void> {
       if (method === "GET" && url.pathname === "/api/tools") {
         const result = await mcp.request((c) => c.listTools());
         json(res, 200, result as unknown as JsonRecord);
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/api/extension/queue") {
+        const body = await readJson(req);
+        const prompt = asString(body.prompt) ?? "";
+        if (!prompt) {
+          json(res, 400, { ok: false, error: "Missing prompt." });
+          return;
+        }
+        const queueTemplate = asString(body.queue_template);
+        const queueCountRaw = body.queue_count;
+        const queueIntervalRaw = body.queue_interval_seconds;
+        const queueCount = Number.isFinite(Number(queueCountRaw))
+          ? Number(queueCountRaw)
+          : undefined;
+        const queueIntervalSeconds = Number.isFinite(Number(queueIntervalRaw))
+          ? Number(queueIntervalRaw)
+          : undefined;
+        const item: ExtensionQueueItem = {
+          id: crypto.randomUUID(),
+          prompt,
+          queueTemplate,
+          queueCount:
+            typeof queueCount === "number" && queueCount > 0
+              ? queueCount
+              : undefined,
+          queueIntervalSeconds:
+            typeof queueIntervalSeconds === "number" &&
+            queueIntervalSeconds >= 0
+              ? queueIntervalSeconds
+              : undefined,
+          createdAt: Date.now(),
+        };
+        extensionQueue = item;
+        json(res, 200, { ok: true, id: item.id });
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/api/extension/queue/next") {
+        if (!extensionQueue) {
+          json(res, 200, { ok: true, item: null });
+          return;
+        }
+        const item = extensionQueue;
+        extensionQueue = null;
+        json(res, 200, { ok: true, item });
         return;
       }
 

@@ -2,6 +2,9 @@ let chatAbortController = null;
 let setActiveTab = () => {};
 let currentCookies = [];
 let currentRenderedCookies = [];
+let isQueueRunning = false;
+let extensionQueuePollTimer = null;
+let extensionQueuePollInFlight = false;
 const SYSTEM_PROMPT = `
 You are a Sora 2 prompt specialist. Use the local prompt guides and produce clear, cinematic video prompts.
 
@@ -41,6 +44,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await restoreQueueState();
   loadGallery();
   initCookieTab();
+  startExtensionQueuePolling();
 
   bindClick("downloadAll", downloadAllAsZip);
   bindClick("clearAll", clearAll);
@@ -328,66 +332,78 @@ async function sendPromptMessage(type, overrideText) {
 }
 
 async function sendPromptQueue() {
+  if (isQueueRunning) {
+    showStatus("Queue already running");
+    return;
+  }
+  isQueueRunning = true;
   const promptInput = document.getElementById("promptInput");
   const queuePromptInput = document.getElementById("queuePromptInput");
   const queueCount = document.getElementById("queueCount");
   const queueInterval = document.getElementById("queueInterval");
 
-  const queueText = (queuePromptInput.value || "").trim();
-  if (!queueText) {
-    showStatus("Enter queue text first");
-    return;
-  }
-
-  const total = Math.max(1, parseInt(queueCount.value, 10) || 0);
-  const intervalSeconds = Math.max(
-    0,
-    Number.isFinite(Number(queueInterval.value))
-      ? Number(queueInterval.value)
-      : 0
-  );
-  const intervalMs = Math.round(intervalSeconds * 1000);
-
-  const targetTab = await getChatGptTab();
-  if (!targetTab || !targetTab.id) {
-    showStatus("Open ChatGPT to send prompts");
-    return;
-  }
-
-  setQueueStatus("Queue started");
-  for (let i = 1; i <= total; i += 1) {
-    if (intervalMs > 0) {
-      setQueueStatus(`Waiting ${intervalSeconds}s before ${i} of ${total}`);
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    }
-    const queueSuffix = queueText.replace(/\{numOfQueue\}/g, String(i));
-    const composedText = queueSuffix;
-    if (!composedText) {
-      showStatus("Queue prompt is empty");
+  try {
+    const queueText = (queuePromptInput.value || "").trim();
+    if (!queueText) {
+      showStatus("Enter queue text first");
       return;
     }
 
-    try {
-      await chrome.tabs.sendMessage(targetTab.id, {
-        type: "send-prompt",
-        text: composedText,
-      });
-      showStatus(`Sent ${i} of ${total}`);
-      setQueueStatus(`Sent ${i} of ${total}`);
-    } catch (error) {
-      console.error("Send queue error:", error);
-      showStatus("Refresh ChatGPT tab and try again");
-      setQueueStatus("Queue failed");
+    const total = Math.max(1, parseInt(queueCount.value, 10) || 0);
+    const intervalSeconds = Math.max(
+      0,
+      Number.isFinite(Number(queueInterval.value))
+        ? Number(queueInterval.value)
+        : 0
+    );
+    const intervalMs = Math.round(intervalSeconds * 1000);
+
+    const targetTab = await getChatGptTab();
+    if (!targetTab || !targetTab.id) {
+      showStatus("Open ChatGPT to send prompts");
       return;
     }
 
-  }
+    setQueueStatus("Queue started");
+    for (let i = 1; i <= total; i += 1) {
+      if (intervalMs > 0) {
+        setQueueStatus(`Waiting ${intervalSeconds}s before ${i} of ${total}`);
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+      const queueSuffix = queueText.replace(/\{numOfQueue\}/g, String(i));
+      const composedText = queueSuffix;
+      if (!composedText) {
+        showStatus("Queue prompt is empty");
+        return;
+      }
 
-  showStatus("Queue complete");
-  setQueueStatus("Queue complete");
+      try {
+        await chrome.tabs.sendMessage(targetTab.id, {
+          type: "send-prompt",
+          text: composedText,
+        });
+        showStatus(`Sent ${i} of ${total}`);
+        setQueueStatus(`Sent ${i} of ${total}`);
+      } catch (error) {
+        console.error("Send queue error:", error);
+        showStatus("Refresh ChatGPT tab and try again");
+        setQueueStatus("Queue failed");
+        return;
+      }
+    }
+
+    showStatus("Queue complete");
+    setQueueStatus("Queue complete");
+  } finally {
+    isQueueRunning = false;
+  }
 }
 
 async function sendPromptAndQueue() {
+  if (isQueueRunning) {
+    showStatus("Queue already running");
+    return;
+  }
   const promptInput = document.getElementById("promptInput");
   const mainText = (promptInput.value || "").trim();
   if (!mainText) {
@@ -414,6 +430,62 @@ async function sendPromptAndQueue() {
   }
 
   await sendPromptQueue();
+}
+
+function startExtensionQueuePolling() {
+  if (extensionQueuePollTimer) return;
+  extensionQueuePollTimer = setInterval(async () => {
+    if (extensionQueuePollInFlight || isQueueRunning) return;
+    extensionQueuePollInFlight = true;
+    try {
+      const item = await fetchExtensionQueueItem();
+      if (!item) return;
+      applyExtensionQueueItem(item);
+      await sendPromptAndQueue();
+    } catch (error) {
+      console.error("Extension queue poll error:", error);
+    } finally {
+      extensionQueuePollInFlight = false;
+    }
+  }, 2000);
+}
+
+async function fetchExtensionQueueItem() {
+  const response = await fetch(
+    "https://localhost:3333/api/extension/queue/next",
+    {
+      method: "GET",
+      credentials: "omit",
+    }
+  ).catch(() => null);
+  if (!response || !response.ok) return null;
+  const data = await response.json().catch(() => null);
+  if (!data || !data.item) return null;
+  return data.item;
+}
+
+function applyExtensionQueueItem(item) {
+  const promptInput = document.getElementById("promptInput");
+  if (promptInput && typeof item.prompt === "string") {
+    promptInput.value = item.prompt;
+    savePromptState(item.prompt);
+  }
+  const queuePromptInput = document.getElementById("queuePromptInput");
+  if (queuePromptInput && typeof item.queueTemplate === "string") {
+    queuePromptInput.value = item.queueTemplate;
+    saveQueueState({ template: item.queueTemplate });
+  }
+  const queueCount = document.getElementById("queueCount");
+  if (queueCount && Number.isFinite(item.queueCount)) {
+    queueCount.value = String(item.queueCount);
+    saveQueueState({ count: queueCount.value });
+  }
+  const queueInterval = document.getElementById("queueInterval");
+  if (queueInterval && Number.isFinite(item.queueIntervalSeconds)) {
+    queueInterval.value = String(item.queueIntervalSeconds);
+    saveQueueState({ interval: queueInterval.value });
+  }
+  showStatus("Received prompt from GUI");
 }
 
 function setQueueStatus(message) {
