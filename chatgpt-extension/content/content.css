@@ -71,6 +71,7 @@
 }
 
 #img-gen-float-toggle {
+  visibility: hidden;
   position: fixed;
   top: 50%;
   right: 12px;

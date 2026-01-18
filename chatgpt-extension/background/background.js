@@ -3,6 +3,10 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ generatedImages: [] });
 });
 
+chrome.sidePanel
+  .setPanelBehavior({ openPanelOnActionClick: true })
+  .catch((error) => console.error(error));
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'GET_IMAGES') {
     chrome.storage.local.get(['generatedImages'], (result) => {
