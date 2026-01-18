@@ -42,70 +42,57 @@ document.addEventListener("DOMContentLoaded", async () => {
   loadGallery();
   initCookieTab();
 
-  document
-    .getElementById("downloadAll")
-    .addEventListener("click", downloadAllAsZip);
-  document.getElementById("clearAll").addEventListener("click", clearAll);
-  document.getElementById("sendChat").addEventListener("click", sendChat);
-  document.getElementById("abortChat").addEventListener("click", abortChat);
-  document
-    .getElementById("fillPrompt")
-    .addEventListener("click", fillPromptWithLlm);
-  document
-    .getElementById("sendPrompt")
-    .addEventListener("click", () => sendPromptMessage("send-prompt"));
-  document
-    .getElementById("sendPromptQueue")
-    .addEventListener("click", sendPromptQueue);
-  document
-    .getElementById("useChatOutput")
-    .addEventListener("click", useChatOutputAsPrompt);
-  document.getElementById("openApi").addEventListener("click", openApiTab);
+  bindClick("downloadAll", downloadAllAsZip);
+  bindClick("clearAll", clearAll);
+  bindClick("sendChat", sendChat);
+  bindClick("abortChat", abortChat);
+  bindClick("fillPrompt", fillPromptWithLlm);
+  bindClick("sendPrompt", () => sendPromptMessage("send-prompt"));
+  bindClick("sendPromptQueue", sendPromptQueue);
+  bindClick("useChatOutput", useChatOutputAsPrompt);
+  bindClick("openApi", openApiTab);
 
-  const chatPrompt = document.getElementById("chatPrompt");
-  chatPrompt.addEventListener("input", () => {
-    saveChatState({ prompt: chatPrompt.value });
+  bindInput("chatPrompt", (value) => {
+    saveChatState({ prompt: value });
   });
 
-  const promptInput = document.getElementById("promptInput");
-  promptInput.addEventListener("input", () => {
-    savePromptState(promptInput.value);
+  bindInput("promptInput", (value) => {
+    savePromptState(value);
   });
 
-  const queuePromptInput = document.getElementById("queuePromptInput");
-  queuePromptInput.addEventListener("input", () => {
-    saveQueueState({ template: queuePromptInput.value });
+  bindInput("queuePromptInput", (value) => {
+    saveQueueState({ template: value });
   });
 
-  const queueCount = document.getElementById("queueCount");
-  queueCount.addEventListener("input", () => {
-    saveQueueState({ count: queueCount.value });
+  bindInput("queueCount", (value) => {
+    saveQueueState({ count: value });
   });
 
-  const queueInterval = document.getElementById("queueInterval");
-  queueInterval.addEventListener("input", () => {
-    saveQueueState({ interval: queueInterval.value });
+  bindInput("queueInterval", (value) => {
+    saveQueueState({ interval: value });
   });
 
-  document
-    .getElementById("scrapeImages")
-    .addEventListener("click", handleScrapeImages);
-  document
-    .getElementById("refreshScrape")
-    .addEventListener("click", handleRefreshScrape);
-  document
-    .getElementById("scrapeFromDom")
-    .addEventListener("click", handleScrapeFromDom);
-  document
-    .getElementById("clearScrape")
-    .addEventListener("click", clearScrapeGallery);
-  document
-    .getElementById("selectAllScrape")
-    .addEventListener("click", toggleSelectAllScrape);
-  document
-    .getElementById("downloadScrapeZip")
-    .addEventListener("click", downloadScrapeZip);
+  bindClick("scrapeImages", handleScrapeImages);
+  bindClick("refreshScrape", handleRefreshScrape);
+  bindClick("scrapeFromDom", handleScrapeFromDom);
+  bindClick("clearScrape", clearScrapeGallery);
+  bindClick("selectAllScrape", toggleSelectAllScrape);
+  bindClick("downloadScrapeZip", downloadScrapeZip);
 });
+
+function bindClick(id, handler) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  el.addEventListener("click", handler);
+  return el;
+}
+
+function bindInput(id, handler) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  el.addEventListener("input", () => handler(el.value));
+  return el;
+}
 
 function initTabs() {
   const tabs = Array.from(document.querySelectorAll(".tab"));
@@ -209,7 +196,8 @@ async function downloadAllAsZip() {
     });
 
     const blob = createZipBlob(entries);
-    triggerDownload(blob, "generated-images.zip");
+    const filename = await buildZipFilename("generated-images");
+    triggerDownload(blob, filename);
     showStatus("ZIP downloaded!");
   } catch (error) {
     console.error("ZIP error:", error);
@@ -763,6 +751,45 @@ function getActiveTabUrl() {
   });
 }
 
+function getActiveTabFullUrl() {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const url = tabs && tabs[0] && tabs[0].url ? tabs[0].url : "";
+      resolve(url || "");
+    });
+  });
+}
+
+async function buildZipFilename(prefix) {
+  const fullUrl = await getActiveTabFullUrl();
+  const slug = deriveSlugFromUrl(fullUrl);
+  if (slug) {
+    return `${prefix}-${slug}.zip`;
+  }
+  return `${prefix}-${Date.now()}.zip`;
+}
+
+function deriveSlugFromUrl(url) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1] || "";
+    if (!last) return sanitizeFilename(parsed.hostname);
+    return sanitizeFilename(last);
+  } catch {
+    return "";
+  }
+}
+
+function sanitizeFilename(value) {
+  return String(value)
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function getCookiesForUrl(url) {
   return new Promise((resolve, reject) => {
     chrome.cookies.getAll({ url }, (cookies) => {
@@ -1068,7 +1095,8 @@ async function downloadScrapeZip() {
     return;
   }
   const blob = createZipBlob(entries);
-  triggerDownload(blob, `scraped-images-${Date.now()}.zip`);
+  const filename = await buildZipFilename("scraped-images");
+  triggerDownload(blob, filename);
   if (status) {
     status.textContent = failed
       ? `${entries.length} zipped, ${failed} failed`
