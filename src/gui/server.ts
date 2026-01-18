@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fsSync from "node:fs";
 import fs from "node:fs/promises";
@@ -329,6 +329,151 @@ function buildCodexArgs(
   }
   args.push("--", "-");
   return args;
+}
+
+function resolveCliCommand(command: string): string {
+  if (process.platform !== "win32") return command;
+  if (command === "agent") {
+    const resolved =
+      tryResolveWindowsCliCommand("agent") ??
+      tryResolveWindowsCliCommand("cursor-agent") ??
+      tryResolveWindowsCliCommand("cursor");
+    if (resolved) return resolved;
+    throw new Error(
+      "Cursor Agent not found. Install Cursor CLI or set CURSOR_AGENT_BIN/CURSOR_BIN."
+    );
+  }
+  if (!WINDOWS_CLI_COMMANDS.has(command)) return command;
+  return resolveWindowsCliCommand(command);
+}
+
+function resolveWindowsExecutable(candidate: string): string {
+  if (!candidate) return "";
+  const ext = path.extname(candidate);
+  if (ext) return fsSync.existsSync(candidate) ? candidate : "";
+  const withCmd = `${candidate}.cmd`;
+  if (fsSync.existsSync(withCmd)) return withCmd;
+  const withExe = `${candidate}.exe`;
+  if (fsSync.existsSync(withExe)) return withExe;
+  const withBat = `${candidate}.bat`;
+  if (fsSync.existsSync(withBat)) return withBat;
+  if (fsSync.existsSync(candidate)) return candidate;
+  return "";
+}
+
+function resolveWindowsCliCommand(command: string): string {
+  const resolved = tryResolveWindowsCliCommand(command);
+  if (resolved) return resolved;
+  const envVar = WINDOWS_CLI_ENV[command];
+  const message = envVar
+    ? `${command} CLI not found. Install it or set ${envVar} to the executable path.`
+    : `${command} CLI not found. Install it or add it to PATH.`;
+  throw new Error(message);
+}
+
+function tryResolveWindowsCliCommand(command: string): string | null {
+  const envVar = WINDOWS_CLI_ENV[command];
+  const envPath = envVar ? process.env[envVar] : "";
+  if (envPath) {
+    const resolved = resolveWindowsExecutable(envPath);
+    if (resolved) return resolved;
+    return envPath;
+  }
+
+  const whereResult = spawnSync("where", [command], { encoding: "utf8" });
+  if (whereResult.status === 0 && whereResult.stdout) {
+    const first = whereResult.stdout.split(/\r?\n/).find(Boolean);
+    const resolved = first ? resolveWindowsExecutable(first) : "";
+    if (resolved) return resolved;
+  }
+
+  const env = process.env;
+  const npmBin = env.APPDATA ? path.join(env.APPDATA, "npm") : "";
+  const isCursorRelated =
+    command === "cursor" || command === "cursor-agent" || command === "agent";
+  const candidates = uniqueStrings([
+    npmBin ? path.join(npmBin, `${command}.cmd`) : "",
+    npmBin ? path.join(npmBin, `${command}.exe`) : "",
+    npmBin ? path.join(npmBin, `${command}.bat`) : "",
+    isCursorRelated
+      ? path.join(env.LOCALAPPDATA || "", "Programs", "Cursor", "Cursor.exe")
+      : "",
+    isCursorRelated
+      ? path.join(env.LOCALAPPDATA || "", "Programs", "cursor", "cursor.exe")
+      : "",
+    isCursorRelated
+      ? path.join(env.LOCALAPPDATA || "", "Cursor", "Cursor.exe")
+      : "",
+    isCursorRelated
+      ? path.join(env.PROGRAMFILES || "", "Cursor", "Cursor.exe")
+      : "",
+    isCursorRelated
+      ? path.join(env["ProgramFiles(x86)"] || "", "Cursor", "Cursor.exe")
+      : "",
+  ]);
+
+  const found = candidates.find(
+    (candidate) => candidate && fsSync.existsSync(candidate)
+  );
+  if (found) return found;
+  return null;
+}
+
+function shouldUseShell(command: string): boolean {
+  if (process.platform !== "win32") return false;
+  return /\.(cmd|bat)$/i.test(command);
+}
+
+const WINDOWS_CLI_COMMANDS = new Set(["codex", "gemini", "copilot", "cursor"]);
+const WINDOWS_CLI_ENV: Record<string, string> = {
+  codex: "CODEX_BIN",
+  gemini: "GEMINI_BIN",
+  copilot: "COPILOT_BIN",
+  cursor: "CURSOR_BIN",
+  agent: "CURSOR_AGENT_BIN",
+};
+
+function diagnoseCliCommand(command: string): {
+  command: string;
+  ok: boolean;
+  resolved?: string;
+  error?: string;
+} {
+  if (process.platform === "win32") {
+    try {
+      const resolved = resolveCliCommand(command);
+      return { command, ok: true, resolved };
+    } catch (error) {
+      return {
+        command,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  const whichResult = spawnSync("sh", ["-lc", `command -v ${command}`], {
+    encoding: "utf8",
+  });
+  if (whichResult.status === 0 && whichResult.stdout) {
+    const resolved = whichResult.stdout.split(/\r?\n/).find(Boolean);
+    if (resolved) return { command, ok: true, resolved };
+  }
+  return {
+    command,
+    ok: false,
+    error: `${command} CLI not found in PATH.`,
+  };
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    if (!value) return false;
+    if (seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
 }
 
 function buildGeminiArgs(model: string | undefined): string[] {
@@ -813,10 +958,12 @@ async function runCommandLlm(params: {
   const maxOutputBytes = params.maxOutputBytes ?? 2_000_000;
 
   return await new Promise((resolve, reject) => {
+    const useShell = shouldUseShell(params.command);
     const child = spawn(params.command, params.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: ROOT_DIR,
       env: process.env,
+      shell: useShell,
     });
 
     let killReason = "";
@@ -1253,8 +1400,9 @@ async function main(): Promise<void> {
                 ? []
                 : [];
 
+            const resolvedCommand = resolveCliCommand(command);
             const out = await runCommandLlm({
-              command: command === "copilot" ? "copilot" : command,
+              command: resolvedCommand,
               args: effectiveArgs,
               input: command === "copilot" ? "" : instruction,
               timeoutMs: 120_000,
@@ -1660,8 +1808,9 @@ async function main(): Promise<void> {
                 ? []
                 : [];
 
+            const resolvedCommand = resolveCliCommand(command);
             const out = await runCommandLlm({
-              command: command === "copilot" ? "copilot" : command,
+              command: resolvedCommand,
               args: effectiveArgs,
               input: prompt,
             });
@@ -1827,6 +1976,15 @@ async function main(): Promise<void> {
       if (method === "GET" && url.pathname === "/api/tools") {
         const result = await mcp.request((c) => c.listTools());
         json(res, 200, result as unknown as JsonRecord);
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/api/cli/diagnostics") {
+        const commands = ["codex", "gemini", "copilot", "cursor", "agent"];
+        const diagnostics = commands.map((command) =>
+          diagnoseCliCommand(command)
+        );
+        json(res, 200, { ok: true, diagnostics });
         return;
       }
 
