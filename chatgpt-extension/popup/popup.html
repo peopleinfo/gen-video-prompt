@@ -21,7 +21,7 @@
           role="tab"
           aria-selected="true"
         >
-          Prompt
+          Prompt 
         </button>
         <button
           class="tab"
@@ -59,6 +59,8 @@
         role="tabpanel"
       >
         <div class="prompt-box">
+          <div class="section-label">Prompt, Read movie and remember main actor i will ask for generate first frame image later now now
+</div>
           <textarea
             id="promptInput"
             placeholder="Type a prompt to send to ChatGPT..."
@@ -69,15 +71,19 @@
               Fill Prompt
             </button>
             <button id="sendPrompt" class="btn btn-primary">Send Prompt</button>
+            <button id="sendPromptAndQueue" class="btn btn-secondary">
+              Send Prompt + Queue
+            </button>
           </div>
         </div>
 
         <div class="prompt-box">
-          <div class="section-label">Send Queue  eg. give part {numOfQueue} only one main actor in frame</div>
+          <div class="section-label">Send Queue, e. give first frame image  part {numOfQueue} only one main actor in frame. eg. i correct you plz don't give me two pic in one images</div>
           <textarea
             id="queuePromptInput"
             placeholder="Queue prompt suffix. Use {numOfQueue} to insert the queue number."
             rows="3"
+            
           ></textarea>
           <div class="queue-controls">
             <label for="queueCount">Queue count</label>

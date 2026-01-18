@@ -48,6 +48,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindClick("abortChat", abortChat);
   bindClick("fillPrompt", fillPromptWithLlm);
   bindClick("sendPrompt", () => sendPromptMessage("send-prompt"));
+  bindClick("sendPromptAndQueue", sendPromptAndQueue);
   bindClick("sendPromptQueue", sendPromptQueue);
   bindClick("useChatOutput", useChatOutputAsPrompt);
   bindClick("openApi", openApiTab);
@@ -132,6 +133,7 @@ async function loadGallery() {
   const images = result.generatedImages || [];
 
   const gallery = document.getElementById("gallery");
+  if (!gallery) return;
 
   if (images.length === 0) {
     gallery.innerHTML =
@@ -298,9 +300,9 @@ async function sendChat() {
   }
 }
 
-async function sendPromptMessage(type) {
+async function sendPromptMessage(type, overrideText) {
   const promptInput = document.getElementById("promptInput");
-  const text = (promptInput.value || "").trim();
+  const text = (overrideText ?? promptInput.value ?? "").trim();
   if (!text) {
     showStatus("Enter a prompt first");
     return;
@@ -354,6 +356,10 @@ async function sendPromptQueue() {
 
   setQueueStatus("Queue started");
   for (let i = 1; i <= total; i += 1) {
+    if (intervalMs > 0) {
+      setQueueStatus(`Waiting ${intervalSeconds}s before ${i} of ${total}`);
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
     const queueSuffix = queueText.replace(/\{numOfQueue\}/g, String(i));
     const composedText = queueSuffix;
     if (!composedText) {
@@ -375,13 +381,39 @@ async function sendPromptQueue() {
       return;
     }
 
-    if (i < total && intervalMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    }
   }
 
   showStatus("Queue complete");
   setQueueStatus("Queue complete");
+}
+
+async function sendPromptAndQueue() {
+  const promptInput = document.getElementById("promptInput");
+  const mainText = (promptInput.value || "").trim();
+  if (!mainText) {
+    showStatus("Enter a prompt first");
+    return;
+  }
+
+  const targetTab = await getChatGptTab();
+  if (!targetTab || !targetTab.id) {
+    showStatus("Open ChatGPT to send prompts");
+    return;
+  }
+
+  try {
+    await chrome.tabs.sendMessage(targetTab.id, {
+      type: "send-prompt",
+      text: mainText,
+    });
+    showStatus("Main prompt sent");
+  } catch (error) {
+    console.error("Send main prompt error:", error);
+    showStatus("Refresh ChatGPT tab and try again");
+    return;
+  }
+
+  await sendPromptQueue();
 }
 
 function setQueueStatus(message) {
