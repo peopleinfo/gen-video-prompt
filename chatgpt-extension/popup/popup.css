@@ -238,6 +238,19 @@ h1 {
   flex-direction: column;
   gap: 6px;
   padding: 6px;
+  cursor: grab;
+  transition: transform 0.2s, opacity 0.2s, border 0.2s;
+}
+
+.scrape-item.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+  border: 2px dashed #10b981;
+}
+
+.scrape-item.drag-over {
+  border: 2px solid #3b82f6;
+  transform: scale(1.02);
 }
 .scrape-item img {
   width: 100%;

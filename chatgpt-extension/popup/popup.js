@@ -5,6 +5,8 @@ let currentRenderedCookies = [];
 let isQueueRunning = false;
 let extensionQueuePollTimer = null;
 let extensionQueuePollInFlight = false;
+let scrapedImageUrls = [];
+let draggedItemIndex = null;
 const SYSTEM_PROMPT = `
 You are a Sora 2 prompt specialist. Use the local prompt guides and produce clear, cinematic video prompts.
 
@@ -153,7 +155,7 @@ async function loadGallery() {
       <span class="label">${img.preset}</span>
       <button class="delete-btn" data-index="${index}">&times;</button>
     </div>
-  `
+  `,
     )
     .join("");
 
@@ -277,7 +279,7 @@ async function sendChat() {
       throw new Error(
         `Request failed: ${response.status}${
           errorText ? ` - ${errorText}` : ""
-        }`
+        }`,
       );
     }
 
@@ -354,7 +356,7 @@ async function sendPromptQueue() {
       0,
       Number.isFinite(Number(queueInterval.value))
         ? Number(queueInterval.value)
-        : 0
+        : 0,
     );
     const intervalMs = Math.round(intervalSeconds * 1000);
 
@@ -456,7 +458,7 @@ async function fetchExtensionQueueItem() {
     {
       method: "GET",
       credentials: "omit",
-    }
+    },
   ).catch(() => null);
   if (!response || !response.ok) return null;
   const data = await response.json().catch(() => null);
@@ -550,7 +552,7 @@ async function fillPromptWithLlm() {
       throw new Error(
         `Request failed: ${response.status}${
           errorText ? ` - ${errorText}` : ""
-        }`
+        }`,
       );
     }
 
@@ -710,7 +712,7 @@ function initCookieTab() {
     }
     try {
       await navigator.clipboard.writeText(
-        JSON.stringify(currentCookies, null, 2)
+        JSON.stringify(currentCookies, null, 2),
       );
       setCookieStatus(`Copied ${currentCookies.length} cookies.`);
     } catch (error) {
@@ -746,9 +748,10 @@ function normalizeCookieUrl(raw) {
   const trimmed = (raw || "").trim();
   if (!trimmed) return "";
   try {
-    const url = trimmed.startsWith("http://") || trimmed.startsWith("https://")
-      ? new URL(trimmed)
-      : new URL(`https://${trimmed}`);
+    const url =
+      trimmed.startsWith("http://") || trimmed.startsWith("https://")
+        ? new URL(trimmed)
+        : new URL(`https://${trimmed}`);
     if (!["http:", "https:"].includes(url.protocol)) return "";
     return url.origin;
   } catch {
@@ -920,30 +923,27 @@ function removeCookie(cookie) {
         }
         await loadCookiesForUrl(normalizeCookieUrl(url));
         resolve();
-      }
+      },
     );
   });
 }
 
-function clearCookiesForUrl(url, cookies) {
-  return new Promise(async (resolve) => {
-    let removed = 0;
-    for (const cookie of cookies) {
-      await new Promise((done) => {
-        const removeUrl = buildCookieUrl(cookie);
-        chrome.cookies.remove(
-          { url: removeUrl, name: cookie.name, storeId: cookie.storeId },
-          () => {
-            removed += 1;
-            done();
-          }
-        );
-      });
-    }
-    setCookieStatus(`Cleared ${removed} cookies.`);
-    await loadCookiesForUrl(url);
-    resolve();
-  });
+async function clearCookiesForUrl(url, cookies) {
+  let removed = 0;
+  for (const cookie of cookies) {
+    await new Promise((done) => {
+      const removeUrl = buildCookieUrl(cookie);
+      chrome.cookies.remove(
+        { url: removeUrl, name: cookie.name, storeId: cookie.storeId },
+        () => {
+          removed += 1;
+          done();
+        },
+      );
+    });
+  }
+  setCookieStatus(`Cleared ${removed} cookies.`);
+  await loadCookiesForUrl(url);
 }
 
 function buildCookieUrl(cookie) {
@@ -976,7 +976,7 @@ function parseImageUrlsFromHtml(html) {
   });
 }
 
-function renderScrapeGallery(urls) {
+function renderScrapeGallery(urls, selectedUrlSet = null) {
   scrapedImageUrls = urls;
   const gallery = document.getElementById("scrapeGallery");
   if (!gallery) return;
@@ -987,20 +987,89 @@ function renderScrapeGallery(urls) {
     return;
   }
   gallery.innerHTML = urls
-    .map(
-      (url, index) => `
-    <label class="scrape-item" data-index="${index}">
-      <input type="checkbox" data-url="${url}" checked>
+    .map((url, index) => {
+      const isChecked = selectedUrlSet ? selectedUrlSet.has(url) : true;
+      return `
+    <label class="scrape-item" data-index="${index}" draggable="true">
+      <input type="checkbox" data-url="${url}" ${isChecked ? "checked" : ""}>
       <img src="${url}" alt="Scraped image">
       <div class="scrape-url">${url}</div>
     </label>
-  `
-    )
+  `;
+    })
     .join("");
   gallery.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
     checkbox.addEventListener("change", updateScrapeStatus);
   });
+
+  gallery.querySelectorAll(".scrape-item").forEach((item) => {
+    item.addEventListener("dragstart", handleDragStart);
+    item.addEventListener("dragover", handleDragOver);
+    item.addEventListener("drop", handleDrop);
+    item.addEventListener("dragenter", handleDragEnter);
+    item.addEventListener("dragleave", handleDragLeave);
+    item.addEventListener("dragend", handleDragEnd);
+  });
+
   updateScrapeStatus();
+}
+
+function handleDragStart(e) {
+  draggedItemIndex = Number(this.dataset.index);
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", draggedItemIndex);
+  this.classList.add("dragging");
+}
+
+function handleDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  return false;
+}
+
+function handleDragEnter(e) {
+  this.classList.add("drag-over");
+}
+
+function handleDragLeave(e) {
+  if (this.contains(e.relatedTarget)) return;
+  this.classList.remove("drag-over");
+}
+
+function handleDragEnd(e) {
+  this.classList.remove("dragging");
+  document.querySelectorAll(".scrape-item").forEach((item) => {
+    item.classList.remove("drag-over");
+  });
+  draggedItemIndex = null;
+}
+
+function handleDrop(e) {
+  e.stopPropagation();
+  e.preventDefault();
+
+  const targetItem = this.closest(".scrape-item");
+  if (!targetItem) return false;
+
+  const targetIndex = Number(targetItem.dataset.index);
+
+  if (draggedItemIndex !== null && draggedItemIndex !== targetIndex) {
+    // Preserve selection
+    const gallery = document.getElementById("scrapeGallery");
+    const selectedUrls = new Set();
+    gallery.querySelectorAll('input[type="checkbox"]:checked').forEach((cb) => {
+      selectedUrls.add(cb.dataset.url);
+    });
+
+    // Reorder
+    const itemToMove = scrapedImageUrls[draggedItemIndex];
+    scrapedImageUrls.splice(draggedItemIndex, 1);
+    scrapedImageUrls.splice(targetIndex, 0, itemToMove);
+
+    renderScrapeGallery(scrapedImageUrls, selectedUrls);
+  }
+
+  return false;
 }
 
 function updateScrapeStatus() {
@@ -1009,9 +1078,7 @@ function updateScrapeStatus() {
   const selectBtn = document.getElementById("selectAllScrape");
   const gallery = document.getElementById("scrapeGallery");
   if (!status || !downloadBtn || !selectBtn || !gallery) return;
-  const checks = Array.from(
-    gallery.querySelectorAll('input[type="checkbox"]')
-  );
+  const checks = Array.from(gallery.querySelectorAll('input[type="checkbox"]'));
   const selected = checks.filter((el) => el.checked).length;
   const total = checks.length;
   status.textContent = total
@@ -1052,12 +1119,13 @@ async function handleScrapeFromDom() {
         showStatus("Refresh ChatGPT tab and try again");
         return;
       }
-      const urls = response && Array.isArray(response.urls) ? response.urls : [];
+      const urls =
+        response && Array.isArray(response.urls) ? response.urls : [];
       if (!urls.length) {
         showStatus("No images found on page");
       }
       renderScrapeGallery(urls);
-    }
+    },
   );
 }
 
@@ -1076,9 +1144,7 @@ function clearScrapeGallery() {
 function toggleSelectAllScrape() {
   const gallery = document.getElementById("scrapeGallery");
   if (!gallery) return;
-  const checks = Array.from(
-    gallery.querySelectorAll('input[type="checkbox"]')
-  );
+  const checks = Array.from(gallery.querySelectorAll('input[type="checkbox"]'));
   if (!checks.length) return;
   const allSelected = checks.every((el) => el.checked);
   checks.forEach((el) => {
@@ -1090,9 +1156,7 @@ function toggleSelectAllScrape() {
 function getSelectedScrapeUrls() {
   const gallery = document.getElementById("scrapeGallery");
   if (!gallery) return [];
-  return Array.from(
-    gallery.querySelectorAll('input[type="checkbox"]:checked')
-  )
+  return Array.from(gallery.querySelectorAll('input[type="checkbox"]:checked'))
     .map((el) => el.dataset.url)
     .filter(Boolean);
 }
@@ -1125,7 +1189,7 @@ function guessFileName(url, index, mimeType, usedNames) {
   if (!base || !base.includes(".")) {
     base = `image-${index + 1}.${ext}`;
   }
-  const safeBase = base.replace(/[^\w.\-]+/g, "-");
+  const safeBase = base.replace(/[^\w.-]+/g, "-");
   const key = safeBase.toLowerCase();
   const count = usedNames.get(key) || 0;
   usedNames.set(key, count + 1);
@@ -1154,7 +1218,7 @@ async function fetchImageData(url, timeoutMs = 8000) {
       }
       if (!response || !response.ok) {
         const proxyUrl = `https://localhost:3333/api/image-proxy?url=${encodeURIComponent(
-          url
+          url,
         )}`;
         response = await fetch(proxyUrl, { signal: controller.signal });
       }
@@ -1185,7 +1249,8 @@ async function downloadScrapeZip() {
   let failed = 0;
   for (let i = 0; i < urls.length; i += 1) {
     const url = urls[i];
-    if (status) status.textContent = `Downloading ${i + 1} of ${urls.length}...`;
+    if (status)
+      status.textContent = `Downloading ${i + 1} of ${urls.length}...`;
     try {
       const { data, mimeType } = await fetchImageData(url);
       const name = guessFileName(url, entries.length, mimeType, usedNames);
@@ -1227,7 +1292,8 @@ async function downloadScrapeImagesIndividually(urls, status) {
   let failed = 0;
   for (let i = 0; i < urls.length; i += 1) {
     const url = urls[i];
-    if (status) status.textContent = `Downloading ${i + 1} of ${urls.length}...`;
+    if (status)
+      status.textContent = `Downloading ${i + 1} of ${urls.length}...`;
     try {
       const name = guessFileName(url, added, "", usedNames);
       const directResult = await downloadUrlWithApi(url, name);
@@ -1296,7 +1362,9 @@ function createZipBlob(entries) {
   entries.forEach((entry) => {
     const nameBytes = encoder.encode(entry.name);
     const dataBytes =
-      entry.data instanceof Uint8Array ? entry.data : new Uint8Array(entry.data);
+      entry.data instanceof Uint8Array
+        ? entry.data
+        : new Uint8Array(entry.data);
     const crc = crc32(dataBytes);
     const modTime = dosTime(new Date());
 
@@ -1354,7 +1422,7 @@ function createZipBlob(entries) {
   eview.setUint16(20, 0, true);
 
   const blobs = [...fileRecords, ...centralRecords, end].map(
-    (chunk) => new Blob([chunk])
+    (chunk) => new Blob([chunk]),
   );
   return new Blob(blobs, { type: "application/zip" });
 }
