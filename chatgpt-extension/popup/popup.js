@@ -10,6 +10,7 @@ let extensionQueuePollTimer = null;
 let extensionQueuePollInFlight = false;
 let scrapedImageUrls = [];
 let draggedItemIndex = null;
+let updateQueueCountTimer = null;
 const SYSTEM_PROMPT = `
 You are a Sora 2 prompt specialist. Use the local prompt guides and produce clear, cinematic video prompts.
 
@@ -87,10 +88,19 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   bindInput("queueCount", (value) => {
     saveQueueState({ count: value });
+    const scrapeLimit = document.getElementById("scrapeLimitCount");
+    if (scrapeLimit) {
+      scrapeLimit.value = value;
+      updateScrapeGalleryFilter();
+    }
   });
 
   bindInput("queueInterval", (value) => {
     saveQueueState({ interval: value });
+  });
+
+  bindInput("scrapeLimitCount", () => {
+    updateScrapeGalleryFilter();
   });
 
   bindClick("scrapeImages", handleScrapeImages);
@@ -99,6 +109,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindClick("clearScrape", clearScrapeGallery);
   bindClick("selectAllScrape", toggleSelectAllScrape);
   bindClick("downloadScrapeZip", downloadScrapeZip);
+
+  document.querySelectorAll('input[name="scrapeFilter"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      renderScrapeGallery(scrapedImageUrls);
+    });
+  });
+
+  const limitCheckbox = document.getElementById("scrapeLimitCheckbox");
+  if (limitCheckbox) {
+    limitCheckbox.addEventListener("change", () => {
+      renderScrapeGallery(scrapedImageUrls);
+    });
+  }
 
   const imageInput = document.getElementById("imageInput");
   if (imageInput) {
@@ -166,17 +189,74 @@ function initTabs() {
 
 function updateQueueCountFromPrompt(text) {
   if (!text) return;
+
+  // 1. Fast regex check
   // Look for "Part N" pattern (case-insensitive)
   const matches = [...text.matchAll(/\bPart\s+(\d+)/gi)];
+  let maxPart = 0;
   if (matches.length > 0) {
-    const maxPart = Math.max(...matches.map((m) => parseInt(m[1], 10)));
-    if (maxPart > 0) {
-      const queueCount = document.getElementById("queueCount");
-      if (queueCount) {
-        queueCount.value = String(maxPart);
-        saveQueueState({ count: String(maxPart) });
+    maxPart = Math.max(...matches.map((m) => parseInt(m[1], 10)));
+  }
+
+  const queueCount = document.getElementById("queueCount");
+  if (!queueCount) return;
+
+  if (maxPart > 0) {
+    // If regex found something, use it and clear any pending LLM check
+    if (updateQueueCountTimer) clearTimeout(updateQueueCountTimer);
+    queueCount.value = String(maxPart);
+    saveQueueState({ count: String(maxPart) });
+    return;
+  }
+
+  // 2. Fallback to LLM (debounced)
+  if (updateQueueCountTimer) clearTimeout(updateQueueCountTimer);
+  updateQueueCountTimer = setTimeout(async () => {
+    try {
+      const count = await countPartsWithLlm(text);
+      if (count > 0) {
+        queueCount.value = String(count);
+        saveQueueState({ count: String(count) });
+        showStatus(`Queue count set to ${count}`);
       }
+    } catch (e) {
+      console.error("LLM count parts failed:", e);
     }
+  }, 1500); // 1.5 second debounce
+}
+
+async function countPartsWithLlm(promptText) {
+  const body = {
+    prompt: `Analyze the following video prompt and count how many distinct "Parts" or scenes it describes. Return ONLY the number (e.g., "3"). If it's a single scene, return 1.\n\nPrompt:\n${promptText}`,
+    provider: "command",
+    command: "codex",
+    codex_session: "new",
+    puter: { model: "gemini-3-flash-preview" },
+    gpt4free: { model: "deepseek" },
+    images: [],
+  };
+
+  try {
+    const response = await fetch("https://localhost:3333/api/chat", {
+      headers: {
+        accept: "*/*",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+      method: "POST",
+      mode: "cors",
+      credentials: "omit",
+    });
+
+    if (!response.ok) return 0;
+    const data = await response.json().catch(() => null);
+    const text = data && typeof data.text === "string" ? data.text : "";
+    // Look for a number in the response
+    const match = text.match(/\d+/);
+    return match ? parseInt(match[0], 10) : 0;
+  } catch (e) {
+    console.error("LLM fetch error:", e);
+    return 0;
   }
 }
 
@@ -829,7 +909,11 @@ async function getChatGptTab() {
     return activeTab;
   }
   const matchingTabs = await chrome.tabs.query({
-    url: ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+    url: [
+      "https://chatgpt.com/*",
+      "https://chat.openai.com/*",
+      "https://sora.chatgpt.com/*",
+    ],
   });
   return matchingTabs[0] || null;
 }
@@ -944,9 +1028,16 @@ async function restoreQueueState() {
   const queuePromptInput = document.getElementById("queuePromptInput");
   const queueCount = document.getElementById("queueCount");
   const queueInterval = document.getElementById("queueInterval");
-  queuePromptInput.value = queuePromptValue;
-  queueCount.value = queueCountValue;
-  queueInterval.value = queueIntervalValue;
+  const scrapeLimit = document.getElementById("scrapeLimitCount");
+
+  if (queuePromptInput) queuePromptInput.value = queuePromptValue;
+  if (queueCount) {
+    queueCount.value = queueCountValue;
+    if (scrapeLimit) {
+      scrapeLimit.value = queueCountValue;
+    }
+  }
+  if (queueInterval) queueInterval.value = queueIntervalValue;
 }
 
 function saveChatState({ prompt, output }) {
@@ -994,7 +1085,8 @@ function isChatGptUrl(url) {
   if (!url) return false;
   return (
     url.startsWith("https://chatgpt.com/") ||
-    url.startsWith("https://chat.openai.com/")
+    url.startsWith("https://chat.openai.com/") ||
+    url.startsWith("https://sora.chatgpt.com/")
   );
 }
 
@@ -1294,22 +1386,65 @@ function parseImageUrlsFromHtml(html) {
   if (!cleaned) return [];
   const doc = new DOMParser().parseFromString(cleaned, "text/html");
   const urls = [];
+
+  function cleanUrl(u) {
+    if (!u) return "";
+    // Remove surrounding quotes/backticks if present in the value
+    // trim first to remove spaces outside quotes (if any) or inside if attribute value has spaces
+    return u
+      .trim()
+      .replace(/^['"`]+|['"`]+$/g, "")
+      .trim();
+  }
+
+  // 1. Existing image scraping
   doc.querySelectorAll("img[src]").forEach((img) => {
-    const src = img.getAttribute("src");
-    if (src) urls.push(src.trim());
+    const src = cleanUrl(img.getAttribute("src"));
+    if (src) urls.push(src);
   });
   doc
     .querySelectorAll('meta[property="og:image"], meta[name="og:image"]')
     .forEach((meta) => {
-      const content = meta.getAttribute("content");
-      if (content) urls.push(content.trim());
+      const content = cleanUrl(meta.getAttribute("content"));
+      if (content) urls.push(content);
     });
+
+  // 2. Video scraping - especially openai videos
+  // Look for video tags with src
+  doc.querySelectorAll("video[src], source[src]").forEach((el) => {
+    const src = cleanUrl(el.getAttribute("src"));
+    if (src) urls.push(src);
+  });
+
+  // Look for any links that look like the openai video pattern
+  // Pattern: https://videos.openai.com/az/files/...
+  // Relaxed regex to catch URLs even if they are not in a valid tag
+  // We look for https://videos.openai.com... and capture until a quote, space, or tag end
+  const videoRegex =
+    /https:\/\/videos\.openai\.com\/az\/files\/[a-zA-Z0-9_\-./%]+/g;
+  const matches = cleaned.match(videoRegex);
+  if (matches) {
+    matches.forEach((m) => {
+      urls.push(cleanUrl(m));
+    });
+  }
+
   const unique = new Set();
   return urls.filter((url) => {
     if (!url || unique.has(url)) return false;
     unique.add(url);
     return true;
   });
+}
+
+function isVideoUrl(url) {
+  if (!url) return false;
+  return (
+    url.includes("videos.openai.com") ||
+    url.endsWith(".mp4") ||
+    url.endsWith(".webm") ||
+    url.endsWith(".mov")
+  );
 }
 
 function getPromptParts(text) {
@@ -1349,6 +1484,13 @@ async function handleCopyScrapedImage(url, index) {
       }
     }
 
+    if (isVideoUrl(url)) {
+      const fullText = `${textToCopy}\n\nVideo URL: ${url}`;
+      await navigator.clipboard.writeText(fullText);
+      showStatus("Copied Text + Video URL!");
+      return;
+    }
+
     // Fetch image data
     const { data, mimeType } = await fetchImageData(url);
     const blob = new Blob([data], { type: mimeType });
@@ -1372,21 +1514,53 @@ function renderScrapeGallery(urls, selectedUrlSet = null) {
   scrapedImageUrls = urls;
   const gallery = document.getElementById("scrapeGallery");
   if (!gallery) return;
-  if (!urls.length) {
-    gallery.innerHTML =
-      '<p class="empty-message">No images found. Paste HTML and click Scrape.</p>';
+
+  const filterEl = document.querySelector('input[name="scrapeFilter"]:checked');
+  const filter = filterEl ? filterEl.value : "all";
+
+  const limitCheckbox = document.getElementById("scrapeLimitCheckbox");
+  const shouldLimit = limitCheckbox ? limitCheckbox.checked : false;
+
+  let filteredUrls = urls.filter((url) => {
+    const isVideo = isVideoUrl(url);
+    if (filter === "image") return !isVideo;
+    if (filter === "video") return isVideo;
+    return true;
+  });
+
+  if (shouldLimit) {
+    const limitInput = document.getElementById("scrapeLimitCount");
+    const limit = limitInput ? parseInt(limitInput.value, 10) || 10 : 10;
+    filteredUrls = filteredUrls.slice(0, limit);
+  }
+
+  if (!filteredUrls.length) {
+    if (urls.length > 0) {
+      gallery.innerHTML =
+        '<p class="empty-message">No media matches the filter.</p>';
+    } else {
+      gallery.innerHTML =
+        '<p class="empty-message">No images or videos found. Paste HTML and click Scrape.</p>';
+    }
     updateScrapeStatus();
     return;
   }
-  gallery.innerHTML = urls
-    .map((url, index) => {
+
+  gallery.innerHTML = filteredUrls
+    .map((url) => {
+      const index = urls.indexOf(url);
       const isChecked = selectedUrlSet ? selectedUrlSet.has(url) : true;
+      const isVideo = isVideoUrl(url);
+      const mediaHtml = isVideo
+        ? `<video src="${url}" controls preload="metadata"></video>`
+        : `<img src="${url}" alt="Scraped image">`;
+
       return `
     <label class="scrape-item" data-index="${index}" draggable="true">
       <input type="checkbox" data-url="${url}" ${isChecked ? "checked" : ""}>
-      <img src="${url}" alt="Scraped image">
+      ${mediaHtml}
       <div class="scrape-url">${url}</div>
-      <button class="copy-btn" data-index="${index}" title="Copy Image + Text" type="button">
+      <button class="copy-btn" data-index="${index}" title="Copy ${isVideo ? "Video URL" : "Image"} + Text" type="button">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -1396,6 +1570,7 @@ function renderScrapeGallery(urls, selectedUrlSet = null) {
   `;
     })
     .join("");
+
   gallery.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
     checkbox.addEventListener("change", updateScrapeStatus);
   });
@@ -1420,7 +1595,73 @@ function renderScrapeGallery(urls, selectedUrlSet = null) {
     item.addEventListener("dragend", handleDragEnd);
   });
 
+  gallery.querySelectorAll(".scrape-item video").forEach((video) => {
+    video.addEventListener("click", (e) => {
+      const filterEl = document.querySelector(
+        'input[name="scrapeFilter"]:checked',
+      );
+      const filter = filterEl ? filterEl.value : "all";
+
+      if (filter === "video") {
+        e.preventDefault();
+        e.stopPropagation();
+        openOrSwitchToSoraDrafts();
+      }
+    });
+  });
+
+  gallery.querySelectorAll(".scrape-item img").forEach((img) => {
+    img.addEventListener("click", (e) => {
+      const filterEl = document.querySelector(
+        'input[name="scrapeFilter"]:checked',
+      );
+      const filter = filterEl ? filterEl.value : "all";
+
+      if (filter === "image") {
+        e.preventDefault();
+        e.stopPropagation();
+        openOrSwitchToChatGpt();
+      }
+    });
+  });
+
   updateScrapeStatus();
+}
+
+function openOrSwitchToChatGpt() {
+  const targetUrl = "https://chatgpt.com/";
+  chrome.tabs.query({}, (tabs) => {
+    const existing = tabs.find(
+      (t) =>
+        t.url &&
+        (t.url.includes("chatgpt.com") || t.url.includes("openai.com")),
+    );
+    if (existing && existing.id) {
+      chrome.tabs.update(existing.id, { active: true });
+      if (existing.windowId) {
+        chrome.windows.update(existing.windowId, { focused: true });
+      }
+    } else {
+      chrome.tabs.create({ url: targetUrl });
+    }
+  });
+}
+
+function openOrSwitchToSoraDrafts() {
+  const targetUrl = "https://sora.chatgpt.com/drafts";
+  chrome.tabs.query({}, (tabs) => {
+    const existing = tabs.find(
+      (t) => t.url && t.url.includes("sora.chatgpt.com/drafts"),
+    );
+    if (existing && existing.id) {
+      chrome.tabs.update(existing.id, { active: true });
+      if (existing.windowId) {
+        chrome.windows.update(existing.windowId, { focused: true });
+      }
+    } else {
+      chrome.tabs.create({ url: targetUrl });
+    }
+  });
 }
 
 function handleDragStart(e) {
@@ -1508,9 +1749,15 @@ function handleScrapeImages() {
 }
 
 function handleRefreshScrape() {
-  const html = document.getElementById("scrapeHtml").value || "";
-  const urls = parseImageUrlsFromHtml(html);
-  renderScrapeGallery(urls);
+  const htmlInput = document.getElementById("scrapeHtml");
+  if (htmlInput) {
+    const html = htmlInput.value || "";
+    const urls = parseImageUrlsFromHtml(html);
+    renderScrapeGallery(urls);
+  } else {
+    // If input is missing (e.g. commented out), just re-render with existing
+    renderScrapeGallery(scrapedImageUrls);
+  }
 }
 
 async function handleScrapeFromDom() {
@@ -1578,6 +1825,9 @@ function guessFileExtension(url, mimeType) {
   if (type.includes("gif")) return "gif";
   if (type.includes("svg")) return "svg";
   if (type.includes("avif")) return "avif";
+  if (type.includes("mp4") || type.includes("mpeg")) return "mp4";
+  if (type.includes("webm")) return "webm";
+  if (type.includes("quicktime") || type.includes("mov")) return "mov";
   if (url) {
     const clean = url.split("?")[0].split("#")[0];
     const last = clean.split("/").pop();
@@ -1941,4 +2191,16 @@ function escapeHtml(text) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function updateScrapeGalleryFilter() {
+  if (scrapedImageUrls && scrapedImageUrls.length > 0) {
+    const selected = new Set();
+    document
+      .querySelectorAll('#scrapeGallery input[type="checkbox"]:checked')
+      .forEach((cb) => {
+        selected.add(cb.dataset.url);
+      });
+    renderScrapeGallery(scrapedImageUrls, selected);
+  }
 }

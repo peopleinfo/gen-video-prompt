@@ -15,6 +15,7 @@
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
+    "https://sora.chatgpt.com/*",
     "https://localhost:3333/*"
   ],
   "action": {
@@ -30,7 +31,11 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://sora.chatgpt.com/*"
+      ],
       "js": ["content/content.js"],
       "css": ["content/content.css"]
     }

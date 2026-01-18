@@ -269,12 +269,22 @@ async function handleSendPromptWithImage(
 
 function collectImageUrls() {
   const urls = [];
+  // Images
   document.body.querySelectorAll("img[src]").forEach((img) => {
     if ((img.getAttribute("alt") || "").trim() !== "Generated image") return;
     const src = img.getAttribute("src");
     if (!src) return;
     urls.push(normalizeUrl(src));
   });
+
+  // Videos (Sora / OpenAI)
+  document.body.querySelectorAll("video[src], source[src]").forEach((el) => {
+    const src = el.getAttribute("src");
+    if (src) {
+      urls.push(normalizeUrl(src));
+    }
+  });
+
   const unique = new Set();
   return urls.filter((url) => {
     if (!url || unique.has(url)) return false;
