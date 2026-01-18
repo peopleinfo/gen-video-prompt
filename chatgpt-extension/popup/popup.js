@@ -1,5 +1,7 @@
 let chatAbortController = null;
 let setActiveTab = () => {};
+let currentCookies = [];
+let currentRenderedCookies = [];
 const SYSTEM_PROMPT = `
 You are a Sora 2 prompt specialist. Use the local prompt guides and produce clear, cinematic video prompts.
 
@@ -38,6 +40,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await restorePromptState();
   await restoreQueueState();
   loadGallery();
+  initCookieTab();
 
   document
     .getElementById("downloadAll")
@@ -198,29 +201,20 @@ async function downloadAllAsZip() {
   showStatus("Creating ZIP...");
 
   try {
-    const zip = new JSZip();
-
-    images.forEach((img, index) => {
+    const entries = images.map((img, index) => {
       const base64Data = img.dataUrl.split(",")[1];
       const ext = img.mimeType?.includes("jpeg") ? "jpg" : "png";
-      zip.file(`${img.preset}_${index + 1}.${ext}`, base64Data, {
-        base64: true,
-      });
+      const name = `${img.preset || "image"}_${index + 1}.${ext}`;
+      return { name, data: base64ToBytes(base64Data) };
     });
 
-    const blob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "generated-images.zip";
-    a.click();
-
-    URL.revokeObjectURL(url);
+    const blob = createZipBlob(entries);
+    triggerDownload(blob, "generated-images.zip");
     showStatus("ZIP downloaded!");
   } catch (error) {
     console.error("ZIP error:", error);
-    showStatus("Error creating ZIP");
+    showStatus("ZIP failed. Downloading individually...");
+    await downloadImagesIndividually(images);
   }
 }
 
@@ -578,6 +572,256 @@ function openApiTab() {
   chrome.tabs.create({ url: "https://localhost:3333/" });
 }
 
+function initCookieTab() {
+  const urlInput = document.getElementById("cookieUrl");
+  const refreshBtn = document.getElementById("cookieRefresh");
+  const useActiveBtn = document.getElementById("cookieUseActive");
+  const copyBtn = document.getElementById("cookieCopyJson");
+  const clearBtn = document.getElementById("cookieClear");
+  const filterInput = document.getElementById("cookieFilter");
+
+  if (
+    !urlInput ||
+    !refreshBtn ||
+    !useActiveBtn ||
+    !copyBtn ||
+    !clearBtn ||
+    !filterInput
+  ) {
+    return;
+  }
+
+  const refreshFromInput = async () => {
+    const normalized = normalizeCookieUrl(urlInput.value);
+    if (!normalized) {
+      setCookieStatus("Enter a valid http(s) URL.");
+      return;
+    }
+    urlInput.value = normalized;
+    await loadCookiesForUrl(normalized);
+  };
+
+  refreshBtn.addEventListener("click", refreshFromInput);
+  useActiveBtn.addEventListener("click", async () => {
+    const activeUrl = await getActiveTabUrl();
+    if (!activeUrl) {
+      setCookieStatus("No active tab with a valid URL.");
+      return;
+    }
+    urlInput.value = activeUrl;
+    await loadCookiesForUrl(activeUrl);
+  });
+  copyBtn.addEventListener("click", async () => {
+    if (!currentCookies.length) {
+      setCookieStatus("No cookies to copy.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(
+        JSON.stringify(currentCookies, null, 2)
+      );
+      setCookieStatus(`Copied ${currentCookies.length} cookies.`);
+    } catch (error) {
+      console.error("Copy cookies error:", error);
+      setCookieStatus("Failed to copy cookies.");
+    }
+  });
+  clearBtn.addEventListener("click", async () => {
+    if (!currentCookies.length) {
+      setCookieStatus("No cookies to clear.");
+      return;
+    }
+    if (!confirm("Clear all cookies for this site?")) return;
+    const targetUrl = normalizeCookieUrl(urlInput.value);
+    if (!targetUrl) {
+      setCookieStatus("Enter a valid http(s) URL.");
+      return;
+    }
+    await clearCookiesForUrl(targetUrl, currentCookies);
+  });
+  filterInput.addEventListener("input", () => {
+    renderCookieList(currentCookies, filterInput.value);
+  });
+
+  getActiveTabUrl().then((url) => {
+    if (!url) return;
+    urlInput.value = url;
+    loadCookiesForUrl(url);
+  });
+}
+
+function normalizeCookieUrl(raw) {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) return "";
+  try {
+    const url = trimmed.startsWith("http://") || trimmed.startsWith("https://")
+      ? new URL(trimmed)
+      : new URL(`https://${trimmed}`);
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    return url.origin;
+  } catch {
+    return "";
+  }
+}
+
+function setCookieStatus(message) {
+  const status = document.getElementById("cookieStatus");
+  if (!status) return;
+  status.textContent = message;
+}
+
+async function loadCookiesForUrl(url) {
+  setCookieStatus("Loading cookies...");
+  try {
+    const cookies = await getCookiesForUrl(url);
+    currentCookies = cookies;
+    const filterEl = document.getElementById("cookieFilter");
+    const filterValue = filterEl ? filterEl.value : "";
+    renderCookieList(cookies, filterValue);
+    setCookieStatus(`${cookies.length} cookies loaded.`);
+  } catch (error) {
+    console.error("Load cookies error:", error);
+    currentCookies = [];
+    renderCookieList([], "");
+    setCookieStatus("Failed to load cookies.");
+  }
+}
+
+function renderCookieList(cookies, filterValue) {
+  const list = document.getElementById("cookieList");
+  if (!list) return;
+  const filter = (filterValue || "").trim().toLowerCase();
+  const filtered = filter
+    ? cookies.filter((cookie) => {
+        const name = (cookie.name || "").toLowerCase();
+        const value = (cookie.value || "").toLowerCase();
+        return name.includes(filter) || value.includes(filter);
+      })
+    : cookies;
+
+  currentRenderedCookies = filtered;
+  if (!filtered.length) {
+    list.innerHTML = '<p class="empty-message">No cookies found.</p>';
+    return;
+  }
+
+  list.innerHTML = filtered
+    .map((cookie, index) => {
+      const details = [
+        cookie.domain ? `domain: ${cookie.domain}` : "",
+        cookie.path ? `path: ${cookie.path}` : "",
+        cookie.httpOnly ? "httpOnly" : "",
+        cookie.secure ? "secure" : "",
+        cookie.sameSite ? `sameSite: ${cookie.sameSite}` : "",
+        typeof cookie.expirationDate === "number"
+          ? `expires: ${new Date(cookie.expirationDate * 1000).toLocaleString()}`
+          : "session",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const safeValue = cookie.value || "";
+      const preview =
+        safeValue.length > 200 ? `${safeValue.slice(0, 200)}...` : safeValue;
+      return `
+        <div class="cookie-item">
+          <div class="cookie-meta">
+            <div class="cookie-name">${cookie.name || "(no name)"}</div>
+            <div class="cookie-value">${preview || "(empty)"}</div>
+            <div class="cookie-details">${details}</div>
+          </div>
+          <button class="cookie-delete" data-index="${index}">Delete</button>
+        </div>
+      `;
+    })
+    .join("");
+
+  list.querySelectorAll(".cookie-delete").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const index = Number(button.dataset.index);
+      const cookie = currentRenderedCookies[index];
+      if (!cookie) return;
+      await removeCookie(cookie);
+    });
+  });
+}
+
+function getActiveTabUrl() {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const url = tabs && tabs[0] && tabs[0].url ? tabs[0].url : "";
+      if (!url || !/^https?:\/\//i.test(url)) {
+        resolve("");
+        return;
+      }
+      try {
+        const parsed = new URL(url);
+        resolve(parsed.origin);
+      } catch {
+        resolve("");
+      }
+    });
+  });
+}
+
+function getCookiesForUrl(url) {
+  return new Promise((resolve, reject) => {
+    chrome.cookies.getAll({ url }, (cookies) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(cookies || []);
+    });
+  });
+}
+
+function removeCookie(cookie) {
+  return new Promise((resolve) => {
+    const url = buildCookieUrl(cookie);
+    chrome.cookies.remove(
+      { url, name: cookie.name, storeId: cookie.storeId },
+      async () => {
+        if (chrome.runtime.lastError) {
+          console.error("Remove cookie error:", chrome.runtime.lastError);
+          setCookieStatus("Failed to delete cookie.");
+        } else {
+          setCookieStatus(`Deleted ${cookie.name}`);
+        }
+        await loadCookiesForUrl(normalizeCookieUrl(url));
+        resolve();
+      }
+    );
+  });
+}
+
+function clearCookiesForUrl(url, cookies) {
+  return new Promise(async (resolve) => {
+    let removed = 0;
+    for (const cookie of cookies) {
+      await new Promise((done) => {
+        const removeUrl = buildCookieUrl(cookie);
+        chrome.cookies.remove(
+          { url: removeUrl, name: cookie.name, storeId: cookie.storeId },
+          () => {
+            removed += 1;
+            done();
+          }
+        );
+      });
+    }
+    setCookieStatus(`Cleared ${removed} cookies.`);
+    await loadCookiesForUrl(url);
+    resolve();
+  });
+}
+
+function buildCookieUrl(cookie) {
+  const protocol = cookie.secure ? "https://" : "http://";
+  const host = (cookie.domain || "").replace(/^\./, "");
+  const path = cookie.path || "/";
+  return `${protocol}${host}${path}`;
+}
+
 function parseImageUrlsFromHtml(html) {
   const cleaned = (html || "").trim();
   if (!cleaned) return [];
@@ -763,13 +1007,29 @@ function guessFileName(url, index, mimeType, usedNames) {
 
 async function fetchImageData(url, timeoutMs = 8000) {
   const isHttp = /^https?:\/\//i.test(url);
-  const fetchUrl = isHttp
-    ? `https://localhost:3333/api/image-proxy?url=${encodeURIComponent(url)}`
-    : url;
+  const fetchUrl = isHttp ? url : url;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(fetchUrl, { signal: controller.signal });
+    let response = null;
+    if (isHttp) {
+      try {
+        response = await fetch(fetchUrl, {
+          signal: controller.signal,
+          credentials: "include",
+        });
+      } catch {
+        response = null;
+      }
+      if (!response || !response.ok) {
+        const proxyUrl = `https://localhost:3333/api/image-proxy?url=${encodeURIComponent(
+          url
+        )}`;
+        response = await fetch(proxyUrl, { signal: controller.signal });
+      }
+    } else {
+      response = await fetch(fetchUrl, { signal: controller.signal });
+    }
     if (!response.ok) {
       throw new Error(`Failed to fetch image: ${url}`);
     }
@@ -789,7 +1049,47 @@ async function downloadScrapeZip() {
     return;
   }
   if (status) status.textContent = "Downloading images...";
-  const zip = new JSZip();
+  const usedNames = new Map();
+  const entries = [];
+  let failed = 0;
+  for (let i = 0; i < urls.length; i += 1) {
+    const url = urls[i];
+    if (status) status.textContent = `Downloading ${i + 1} of ${urls.length}...`;
+    try {
+      const { data, mimeType } = await fetchImageData(url);
+      const name = guessFileName(url, entries.length, mimeType, usedNames);
+      entries.push({ name, data: new Uint8Array(data) });
+    } catch {
+      failed += 1;
+    }
+  }
+  if (!entries.length) {
+    if (status) status.textContent = "Download failed";
+    return;
+  }
+  const blob = createZipBlob(entries);
+  triggerDownload(blob, `scraped-images-${Date.now()}.zip`);
+  if (status) {
+    status.textContent = failed
+      ? `${entries.length} zipped, ${failed} failed`
+      : `${entries.length} images zipped`;
+  }
+}
+
+async function downloadImagesIndividually(images) {
+  for (let i = 0; i < images.length; i += 1) {
+    const img = images[i];
+    const base64Data = img.dataUrl.split(",")[1];
+    const ext = img.mimeType?.includes("jpeg") ? "jpg" : "png";
+    const bytes = base64ToBytes(base64Data);
+    const blob = new Blob([bytes], { type: img.mimeType || "image/png" });
+    const name = `${img.preset || "image"}_${i + 1}.${ext}`;
+    triggerDownload(blob, name);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+async function downloadScrapeImagesIndividually(urls, status) {
   const usedNames = new Map();
   let added = 0;
   let failed = 0;
@@ -797,28 +1097,156 @@ async function downloadScrapeZip() {
     const url = urls[i];
     if (status) status.textContent = `Downloading ${i + 1} of ${urls.length}...`;
     try {
-      const { data, mimeType } = await fetchImageData(url);
-      const name = guessFileName(url, added, mimeType, usedNames);
-      zip.file(name, data);
+      const name = guessFileName(url, added, "", usedNames);
+      const directResult = await downloadUrlWithApi(url, name);
+      if (!directResult) {
+        const { data, mimeType } = await fetchImageData(url);
+        const fallbackName = guessFileName(url, added, mimeType, usedNames);
+        const blob = new Blob([data], {
+          type: mimeType || "application/octet-stream",
+        });
+        triggerDownload(blob, fallbackName);
+      }
       added += 1;
+      await new Promise((resolve) => setTimeout(resolve, 100));
     } catch {
       failed += 1;
     }
   }
-  if (!added) {
-    if (status) status.textContent = "Download failed";
-    return;
-  }
-  const blob = await zip.generateAsync({ type: "blob" });
-  const zipUrl = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = zipUrl;
-  a.download = `scraped-images-${Date.now()}.zip`;
-  a.click();
-  URL.revokeObjectURL(zipUrl);
   if (status) {
     status.textContent = failed
-      ? `${added} zipped, ${failed} failed`
-      : `${added} images zipped`;
+      ? `${added} downloaded, ${failed} failed`
+      : `${added} images downloaded`;
   }
+}
+
+function base64ToBytes(base64) {
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadUrlWithApi(url, filename) {
+  return new Promise((resolve) => {
+    if (!chrome?.downloads || !/^https?:\/\//i.test(url)) {
+      resolve(false);
+      return;
+    }
+    chrome.downloads.download({ url, filename }, (downloadId) => {
+      if (chrome.runtime.lastError || !downloadId) {
+        resolve(false);
+        return;
+      }
+      resolve(true);
+    });
+  });
+}
+
+function createZipBlob(entries) {
+  const encoder = new TextEncoder();
+  const fileRecords = [];
+  const centralRecords = [];
+  let offset = 0;
+
+  entries.forEach((entry) => {
+    const nameBytes = encoder.encode(entry.name);
+    const dataBytes =
+      entry.data instanceof Uint8Array ? entry.data : new Uint8Array(entry.data);
+    const crc = crc32(dataBytes);
+    const modTime = dosTime(new Date());
+
+    const localHeader = new Uint8Array(30 + nameBytes.length);
+    const view = new DataView(localHeader.buffer);
+    view.setUint32(0, 0x04034b50, true);
+    view.setUint16(4, 20, true);
+    view.setUint16(6, 0, true);
+    view.setUint16(8, 0, true);
+    view.setUint16(10, modTime.time, true);
+    view.setUint16(12, modTime.date, true);
+    view.setUint32(14, crc, true);
+    view.setUint32(18, dataBytes.length, true);
+    view.setUint32(22, dataBytes.length, true);
+    view.setUint16(26, nameBytes.length, true);
+    view.setUint16(28, 0, true);
+    localHeader.set(nameBytes, 30);
+
+    const centralHeader = new Uint8Array(46 + nameBytes.length);
+    const cview = new DataView(centralHeader.buffer);
+    cview.setUint32(0, 0x02014b50, true);
+    cview.setUint16(4, 20, true);
+    cview.setUint16(6, 20, true);
+    cview.setUint16(8, 0, true);
+    cview.setUint16(10, 0, true);
+    cview.setUint16(12, modTime.time, true);
+    cview.setUint16(14, modTime.date, true);
+    cview.setUint32(16, crc, true);
+    cview.setUint32(20, dataBytes.length, true);
+    cview.setUint32(24, dataBytes.length, true);
+    cview.setUint16(28, nameBytes.length, true);
+    cview.setUint16(30, 0, true);
+    cview.setUint16(32, 0, true);
+    cview.setUint16(34, 0, true);
+    cview.setUint16(36, 0, true);
+    cview.setUint32(38, 0, true);
+    cview.setUint32(42, offset, true);
+    centralHeader.set(nameBytes, 46);
+
+    fileRecords.push(localHeader, dataBytes);
+    centralRecords.push(centralHeader);
+    offset += localHeader.length + dataBytes.length;
+  });
+
+  const centralSize = centralRecords.reduce((sum, rec) => sum + rec.length, 0);
+  const end = new Uint8Array(22);
+  const eview = new DataView(end.buffer);
+  eview.setUint32(0, 0x06054b50, true);
+  eview.setUint16(4, 0, true);
+  eview.setUint16(6, 0, true);
+  eview.setUint16(8, centralRecords.length, true);
+  eview.setUint16(10, centralRecords.length, true);
+  eview.setUint32(12, centralSize, true);
+  eview.setUint32(16, offset, true);
+  eview.setUint16(20, 0, true);
+
+  const blobs = [...fileRecords, ...centralRecords, end].map(
+    (chunk) => new Blob([chunk])
+  );
+  return new Blob(blobs, { type: "application/zip" });
+}
+
+function dosTime(date) {
+  const year = date.getFullYear() - 1980;
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const seconds = Math.floor(date.getSeconds() / 2);
+  const dosDate = (year << 9) | (month << 5) | day;
+  const dosTime = (hours << 11) | (minutes << 5) | seconds;
+  return { date: dosDate, time: dosTime };
+}
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) {
+    crc ^= bytes[i];
+    for (let j = 0; j < 8; j += 1) {
+      const mask = -(crc & 1);
+      crc = (crc >>> 1) ^ (0xedb88320 & mask);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }

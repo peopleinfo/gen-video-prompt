@@ -41,6 +41,15 @@
         >
           AI GUI
         </button>
+        <button
+          class="tab"
+          data-tab="cookies"
+          type="button"
+          role="tab"
+          aria-selected="false"
+        >
+          Cookies
+        </button>
       </div>
 
       <section
@@ -166,6 +175,52 @@
             loading="lazy"
             allow="clipboard-read; clipboard-write"
           ></iframe>
+        </div>
+      </section>
+
+      <section
+        class="tab-content"
+        id="tab-cookies"
+        data-active="false"
+        role="tabpanel"
+      >
+        <div class="prompt-box">
+          <div class="section-label">Site</div>
+          <div class="cookie-controls">
+            <input
+              id="cookieUrl"
+              type="text"
+              placeholder="https://example.com"
+            />
+            <button id="cookieUseActive" class="btn btn-secondary" type="button">
+              Use active tab
+            </button>
+            <button id="cookieRefresh" class="btn btn-primary" type="button">
+              Refresh
+            </button>
+          </div>
+          <div class="cookie-actions">
+            <button id="cookieCopyJson" class="btn btn-secondary" type="button">
+              Copy JSON
+            </button>
+            <button id="cookieClear" class="btn btn-danger" type="button">
+              Clear site
+            </button>
+          </div>
+          <div id="cookieStatus" class="inline-status"></div>
+        </div>
+
+        <div class="prompt-box">
+          <div class="section-label">Cookies</div>
+          <input
+            id="cookieFilter"
+            class="cookie-filter"
+            type="text"
+            placeholder="Filter by name or value"
+          />
+          <div id="cookieList" class="cookie-list">
+            <p class="empty-message">No cookies loaded.</p>
+          </div>
         </div>
       </section>
 

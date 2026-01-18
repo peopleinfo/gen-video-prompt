@@ -6,12 +6,15 @@
   "permissions": [
     "storage",
     "activeTab",
-    "tabs"
+    "tabs",
+    "cookies",
+    "downloads"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
-    "https://localhost:3333/*"
+    "https://localhost:3333/*",
+    "<all_urls>"
   ],
   "action": {
     "default_popup": "popup/popup.html",
